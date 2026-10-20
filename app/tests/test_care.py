@@ -51,13 +51,13 @@ def register(is_botanist=False, email=None):
 
 def create_plant(headers, name="Monstera", location="Lyon"):
     files = {"photo": ("p.jpg", io.BytesIO(b"img"), "image/jpeg")}
-    response = client.post("/plants/", params={"name": name, "location": location}, files=files, headers=headers)
+    response = client.post("/plants/", data={"name": name, "location": location}, files=files, headers=headers)
     assert response.status_code == 200
     return response.json()["id"]
 
 
 def request_care(headers, plant_id, start=START, end=END):
-    return client.put(f"/plants/{plant_id}", params={"care_requested": True, "care_start": str(start), "care_end": str(end)}, headers=headers)
+    return client.put(f"/plants/{plant_id}", data={"care_requested": True, "care_start": str(start), "care_end": str(end)}, headers=headers)
 
 
 @pytest.fixture
@@ -70,7 +70,7 @@ def admin(monkeypatch):
 def test_care_request_needs_valid_dates():
     owner, _ = register()
     plant = create_plant(owner)
-    assert client.put(f"/plants/{plant}", params={"care_requested": True}, headers=owner).status_code == 400
+    assert client.put(f"/plants/{plant}", data={"care_requested": True}, headers=owner).status_code == 400
     assert request_care(owner, plant, START, START - timedelta(days=1)).status_code == 400
     assert request_care(owner, plant, date.today() - timedelta(days=9), date.today() - timedelta(days=2)).status_code == 400
 
@@ -210,7 +210,7 @@ def test_botanist_verification_and_advice(admin):
     assert client.post(f"/plants/{plant}/advice-requests", json={"question": "Encore ?"}, headers=owner).status_code == 409
     assert advice["id"] in [a["id"] for a in client.get("/advice-requests/", headers=botanist).json()]
 
-    client.post("/comments/", params={"plant_id": plant, "comment": "Trop d'eau."}, headers=botanist)
+    client.post("/comments/", json={"plant_id": plant, "comment": "Trop d'eau."}, headers=botanist)
     assert client.get(f"/plants/{plant}/advice-requests", headers=owner).json()[0]["status"] == "answered"
     comment = client.get(f"/plants/{plant}/comments/", headers=owner).json()[0]
     assert comment["user"]["is_botanist"] is True

@@ -1,7 +1,7 @@
 import os
 from datetime import date
 from uuid import uuid4
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile, File
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -85,9 +85,10 @@ def get_plant_or_404(db: Session, plant_id: int) -> models.Plant:
 @router.post("/plants/", response_model=schemas.Plant, tags=["Plants"])
 @trace_function("plant_creation")
 async def create_plant(
-        name: str,
-        location: str,
-        care_instructions: str | None = None,
+        # form fields, not query parameters: the location is personal and URLs end up in the logs
+        name: str = Form(..., min_length=1, max_length=200),
+        location: str = Form(..., min_length=1, max_length=200),
+        care_instructions: str | None = Form(None, max_length=2000),
         photo: UploadFile = File(),
         current_user: models.User = Depends(auth.get_current_user),
         db: Session = Depends(get_db)
@@ -117,12 +118,12 @@ async def create_plant(
 @trace_function("plant_update")
 async def update_plant(
         plant_id: int,
-        name: str = None,
-        location: str = None,
-        care_instructions: str | None = None,
-        care_requested: bool | None = None,
-        care_start: date | None = None,
-        care_end: date | None = None,
+        name: str | None = Form(None, min_length=1, max_length=200),
+        location: str | None = Form(None, min_length=1, max_length=200),
+        care_instructions: str | None = Form(None, max_length=2000),
+        care_requested: bool | None = Form(None),
+        care_start: date | None = Form(None),
+        care_end: date | None = Form(None),
         photo: UploadFile = File(None),
         current_user: models.User = Depends(auth.get_current_user),
         db: Session = Depends(get_db)

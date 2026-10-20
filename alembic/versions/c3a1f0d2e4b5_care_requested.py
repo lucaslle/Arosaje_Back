@@ -18,10 +18,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # batch mode: alembic/env.py targets SQLite, which cannot ALTER columns in place
+    # batch mode keeps SQLite (tests) working; the checks let it run on databases first built by create_all
+    columns = {column['name'] for column in sa.inspect(op.get_bind()).get_columns('plants')}
     with op.batch_alter_table('plants') as batch_op:
-        batch_op.add_column(sa.Column('care_requested', sa.Boolean(), nullable=False, server_default=sa.false()))
-        batch_op.drop_column('plant_sitting')
+        if 'care_requested' not in columns:
+            batch_op.add_column(sa.Column('care_requested', sa.Boolean(), nullable=False, server_default=sa.false()))
+        if 'plant_sitting' in columns:
+            batch_op.drop_column('plant_sitting')
 
 
 def downgrade() -> None:

@@ -129,7 +129,7 @@ def test_plant(test_user_token, test_image):
         
         response = client.post(
             "/plants/",
-            params=plant_data,
+            data=plant_data,
             files=files,
             headers=headers
         )
@@ -155,7 +155,7 @@ def test_create_plant(test_user_token, test_image):
         
         response = client.post(
             "/plants/",
-            params=plant_data,
+            data=plant_data,
             files=files,
             headers=headers
         )
@@ -200,7 +200,7 @@ def test_list_all_plants_except_users(test_user_token, test_botanist_token, test
     
     botanist_response = client.post(
         "/plants/",
-        params=botanist_plant_data,
+        data=botanist_plant_data,
         files=files,
         headers=botanist_headers
     )
@@ -241,7 +241,7 @@ def test_update_plant(test_user_token, test_plant):
     
     response = client.put(
         f"/plants/{test_plant}",
-        params=update_data,
+        data=update_data,
         files=files,
         headers=headers
     )
@@ -260,13 +260,13 @@ def test_photo_upload_rules(test_user_token, test_image):
     photo_urls = []
     for _ in range(2):
         with open(test_image, "rb") as img:
-            response = client.post("/plants/", params=params, files={"photo": ("same_name.jpg", img, "image/jpeg")}, headers=headers)
+            response = client.post("/plants/", data=params, files={"photo": ("same_name.jpg", img, "image/jpeg")}, headers=headers)
         assert response.status_code == 200
         photo_urls.append(response.json()["photo_url"])
     assert photo_urls[0] != photo_urls[1]
     assert all(url.startswith("photos/") for url in photo_urls)
 
-    response = client.post("/plants/", params=params, files={"photo": ("page.html", io.BytesIO(b"<script>"), "text/html")}, headers=headers)
+    response = client.post("/plants/", data=params, files={"photo": ("page.html", io.BytesIO(b"<script>"), "text/html")}, headers=headers)
     assert response.status_code == 400
 
     # après remplacement de la photo, l'URL stockée reste un chemin relatif valide
@@ -297,7 +297,7 @@ def test_delete_plant(test_user_token):
     
     create_response = client.post(
         "/plants/",
-        params=plant_data,
+        data=plant_data,
         files=files,
         headers=headers
     )

@@ -112,7 +112,7 @@ def test_plant(test_user_token):
     
     response = client.post(
         "/plants/",
-        params=plant_data,
+        data=plant_data,
         files=files,
         headers=headers
     )
@@ -132,7 +132,7 @@ def test_comment(test_user_token, test_plant):
         "comment": "This is a test comment"
     }
     
-    response = client.post("/comments/", params=comment_data, headers=headers)
+    response = client.post("/comments/", json=comment_data, headers=headers)
     
     assert response.status_code == 200, f"Création de commentaire échouée: {response.json()}"
     
@@ -148,7 +148,7 @@ def test_create_comment(test_user_token, test_plant):
         "comment": "This is a new comment for testing"
     }
     
-    response = client.post("/comments/", params=comment_data, headers=headers)
+    response = client.post("/comments/", json=comment_data, headers=headers)
     
     assert response.status_code == 200
     data = response.json()
@@ -167,7 +167,7 @@ def test_create_comment_nonexistent_plant(test_user_token):
         "comment": "This comment should not be created"
     }
     
-    response = client.post("/comments/", params=comment_data, headers=headers)
+    response = client.post("/comments/", json=comment_data, headers=headers)
     
     assert response.status_code == 404
     assert "Plant not found" in response.json()["detail"]
@@ -219,7 +219,7 @@ def test_update_comment(test_user_token, test_comment):
     
     response = client.put(
         f"/comments/{test_comment}", 
-        params={"comment_text": updated_text},
+        json={"comment_text": updated_text},
         headers=headers
     )
     
@@ -237,7 +237,7 @@ def test_update_nonexistent_comment(test_user_token):
     
     response = client.put(
         f"/comments/{nonexistent_comment_id}", 
-        params={"comment_text": updated_text},
+        json={"comment_text": updated_text},
         headers=headers
     )
     
@@ -252,7 +252,7 @@ def test_unauthorized_comment_update(test_botanist_token, test_comment):
     
     response = client.put(
         f"/comments/{test_comment}", 
-        params={"comment_text": updated_text},
+        json={"comment_text": updated_text},
         headers=botanist_headers
     )
     
@@ -294,7 +294,7 @@ def test_comment_owner_can_delete(test_user_token, test_plant):
         "comment": "This comment will be deleted by its owner"
     }
     
-    create_response = client.post("/comments/", params=comment_data, headers=headers)
+    create_response = client.post("/comments/", json=comment_data, headers=headers)
     assert create_response.status_code == 200
     comment_id = create_response.json()["id"]
     
@@ -319,7 +319,7 @@ def test_plant_owner_can_delete_comment(test_user_token, test_botanist_token, te
         "comment": "This comment will be deleted by the plant owner"
     }
     
-    create_response = client.post("/comments/", params=comment_data, headers=botanist_headers)
+    create_response = client.post("/comments/", json=comment_data, headers=botanist_headers)
     assert create_response.status_code == 200
     comment_id = create_response.json()["id"]
     
@@ -346,7 +346,7 @@ def test_unauthorized_comment_delete(test_user_token, test_botanist_token, test_
     }
     files = {"photo": ("empty.jpg", io.BytesIO(b""), "image/jpeg")}
     
-    plant_response = client.post("/plants/", params=plant_data, files=files, headers=botanist_headers)
+    plant_response = client.post("/plants/", data=plant_data, files=files, headers=botanist_headers)
     assert plant_response.status_code == 200
     botanist_plant_id = plant_response.json()["id"]
     
@@ -355,7 +355,7 @@ def test_unauthorized_comment_delete(test_user_token, test_botanist_token, test_
         "plant_id": botanist_plant_id,
         "comment": "Comment on botanist's plant"
     }
-    comment_response = client.post("/comments/", params=comment_data, headers=botanist_headers)
+    comment_response = client.post("/comments/", json=comment_data, headers=botanist_headers)
     assert comment_response.status_code == 200
     botanist_comment_id = comment_response.json()["id"]
     

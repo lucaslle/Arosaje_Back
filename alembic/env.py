@@ -11,6 +11,7 @@ sys.path.append(BASE_DIR)
 
 # Import the MetaData object from your models
 from app.models import Base
+from app.config import get_database_url
 
 # this is the Alembic Config object
 config = context.config
@@ -22,8 +23,8 @@ if config.config_file_name is not None:
 # Set the MetaData object for autogenerate support
 target_metadata = Base.metadata
 
-# URL for the database (you might want to get this from environment variables)
-config.set_main_option('sqlalchemy.url', 'sqlite:///a_rosa_je.db')
+# the app's own database (DATABASE_URL); '%' must be doubled for the ini-style config
+config.set_main_option('sqlalchemy.url', get_database_url().replace('%', '%%'))
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""

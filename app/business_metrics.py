@@ -8,6 +8,10 @@ from app.database import SessionLocal
 
 
 class BusinessMetrics(Collector):
+    def describe(self):
+        # without it, registering would run collect() at import time, before migrations created the tables
+        return []
+
     def collect(self):
         db = SessionLocal()
         try:

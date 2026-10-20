@@ -210,3 +210,18 @@ class Dashboard(pydantic.BaseModel):
     my_pending_offers: int
     advice: list[DashboardAdvice]
     reputation: SitterPublic
+
+
+class UserUpdate(pydantic.BaseModel):
+    email: pydantic.EmailStr | None = None
+    username: str | None = pydantic.Field(default=None, min_length=1, max_length=100)
+    phone: str | None = pydantic.Field(default=None, max_length=30)
+    is_botanist: bool | None = None
+
+class CommentCreate(pydantic.BaseModel):
+    plant_id: int
+    comment: str = pydantic.Field(min_length=1, max_length=1000)
+
+class CommentUpdate(pydantic.BaseModel):
+    comment_text: str = pydantic.Field(min_length=1, max_length=1000)
+

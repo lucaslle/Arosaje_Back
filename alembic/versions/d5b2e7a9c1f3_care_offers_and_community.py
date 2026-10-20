@@ -18,14 +18,25 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    with op.batch_alter_table('users') as batch_op:
-        batch_op.add_column(sa.Column('botanist_verified', sa.Boolean(), nullable=False, server_default=sa.false()))
-    with op.batch_alter_table('plants') as batch_op:
-        batch_op.add_column(sa.Column('care_requested_at', sa.DateTime(), nullable=True))
-        batch_op.add_column(sa.Column('care_start', sa.Date(), nullable=True))
-        batch_op.add_column(sa.Column('care_end', sa.Date(), nullable=True))
+    # each step is skipped when it already exists: databases first built by create_all have part of it
+    inspector = sa.inspect(op.get_bind())
+    tables = set(inspector.get_table_names())
+    user_columns = {column['name'] for column in inspector.get_columns('users')}
+    plant_columns = {column['name'] for column in inspector.get_columns('plants')}
 
-    op.create_table('care_offers',
+    if 'botanist_verified' not in user_columns:
+        with op.batch_alter_table('users') as batch_op:
+            batch_op.add_column(sa.Column('botanist_verified', sa.Boolean(), nullable=False, server_default=sa.false()))
+    with op.batch_alter_table('plants') as batch_op:
+        for name, column_type in (('care_requested_at', sa.DateTime()), ('care_start', sa.Date()), ('care_end', sa.Date())):
+            if name not in plant_columns:
+                batch_op.add_column(sa.Column(name, column_type, nullable=True))
+
+    def create(name, *columns):
+        if name not in tables:
+            op.create_table(name, *columns)
+
+    create('care_offers',
         sa.Column('id', sa.Integer(), primary_key=True),
         sa.Column('plant_id', sa.Integer(), sa.ForeignKey('plants.id'), nullable=False, index=True),
         sa.Column('sitter_id', sa.Integer(), sa.ForeignKey('users.id'), nullable=False, index=True),
@@ -34,14 +45,14 @@ def upgrade() -> None:
         sa.Column('decided_at', sa.DateTime(), nullable=True),
         sa.Column('wait_seconds', sa.Integer(), nullable=True),
     )
-    op.create_table('messages',
+    create('messages',
         sa.Column('id', sa.Integer(), primary_key=True),
         sa.Column('offer_id', sa.Integer(), sa.ForeignKey('care_offers.id'), nullable=False, index=True),
         sa.Column('sender_id', sa.Integer(), sa.ForeignKey('users.id'), nullable=False),
         sa.Column('text', sa.String(length=1000), nullable=False),
         sa.Column('created_at', sa.DateTime(), nullable=False),
     )
-    op.create_table('care_logs',
+    create('care_logs',
         sa.Column('id', sa.Integer(), primary_key=True),
         sa.Column('plant_id', sa.Integer(), sa.ForeignKey('plants.id'), nullable=False, index=True),
         sa.Column('author_id', sa.Integer(), sa.ForeignKey('users.id'), nullable=False),
@@ -49,14 +60,14 @@ def upgrade() -> None:
         sa.Column('photo_url', sa.String(), nullable=True),
         sa.Column('created_at', sa.DateTime(), nullable=False),
     )
-    op.create_table('favorites',
+    create('favorites',
         sa.Column('id', sa.Integer(), primary_key=True),
         sa.Column('user_id', sa.Integer(), sa.ForeignKey('users.id'), nullable=False, index=True),
         sa.Column('plant_id', sa.Integer(), sa.ForeignKey('plants.id'), nullable=False),
         sa.Column('created_at', sa.DateTime(), nullable=False),
         sa.UniqueConstraint('user_id', 'plant_id'),
     )
-    op.create_table('advice_requests',
+    create('advice_requests',
         sa.Column('id', sa.Integer(), primary_key=True),
         sa.Column('plant_id', sa.Integer(), sa.ForeignKey('plants.id'), nullable=False, index=True),
         sa.Column('author_id', sa.Integer(), sa.ForeignKey('users.id'), nullable=False),
@@ -64,7 +75,7 @@ def upgrade() -> None:
         sa.Column('status', sa.String(length=16), nullable=False),
         sa.Column('created_at', sa.DateTime(), nullable=False),
     )
-    op.create_table('reviews',
+    create('reviews',
         sa.Column('id', sa.Integer(), primary_key=True),
         sa.Column('offer_id', sa.Integer(), sa.ForeignKey('care_offers.id'), nullable=False, unique=True),
         sa.Column('author_id', sa.Integer(), sa.ForeignKey('users.id'), nullable=False),

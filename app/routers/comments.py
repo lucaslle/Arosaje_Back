@@ -12,12 +12,12 @@ logger = get_logger()
 @router.post("/comments/", response_model=schemas.Comment, tags=["Comments"])
 @trace_function("comment_creation")
 async def create_comment(
-        plant_id: int,
-        comment: str,
+        body: schemas.CommentCreate,
         current_user: models.User = Depends(auth.get_current_user),
         db: Session = Depends(get_db)
 ):
     """Create a comment on a plant."""
+    plant_id, comment = body.plant_id, body.comment.strip()
     logger.info("Creating comment", plant_id=plant_id, user_id=current_user.id)
 
     plant = db.query(models.Plant).filter(models.Plant.id == plant_id).first()
@@ -77,7 +77,7 @@ async def get_plant_comments(
 @trace_function("comment_update")
 async def update_comment(
         comment_id: int,
-        comment_text: str,
+        body: schemas.CommentUpdate,
         current_user: models.User = Depends(auth.get_current_user),
         db: Session = Depends(get_db)
 ):
@@ -97,7 +97,7 @@ async def update_comment(
         )
         raise HTTPException(status_code=403, detail="Not authorized to update this comment")
 
-    db_comment.comment = comment_text
+    db_comment.comment = body.comment_text.strip()
     db.commit()
     db.refresh(db_comment)
 

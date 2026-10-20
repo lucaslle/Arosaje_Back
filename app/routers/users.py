@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from pydantic import EmailStr
 from sqlalchemy.orm import Session
 
 from app import models, schemas, auth
@@ -19,7 +18,8 @@ async def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
     """Create a new user with hashing and encryption."""
     logger.info("Creating new user", is_botanist=user.is_botanist)
 
-    email_hash = security_manager.hash_value(user.email)
+    email = auth.normalize_email(user.email)
+    email_hash = security_manager.hash_value(email)
     db_user = db.query(models.User).filter(models.User.email_hash == email_hash).first()
     if db_user:
         logger.warning("User creation failed - email already exists")
@@ -35,7 +35,7 @@ async def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
         email_hash=email_hash,
         username_hash=username_hash,
         phone_hash=security_manager.hash_value(user.phone),
-        email_encrypted=security_manager.encrypt_value(user.email),
+        email_encrypted=security_manager.encrypt_value(email),
         username_encrypted=security_manager.encrypt_value(user.username),
         phone_encrypted=security_manager.encrypt_value(user.phone),
         hashed_password=auth.get_password_hash(user.password),
@@ -65,14 +65,13 @@ async def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
 @trace_function("user_update")
 async def edit_user(
         user_id: int,
-        email: EmailStr = None,
-        username: str = None,
-        phone: str = None,
-        is_botanist: bool = None,
+        update: schemas.UserUpdate,
         current_user: schemas.User = Depends(auth.get_current_user),
         db: Session = Depends(get_db)
 ):
-    """Update an existing user account."""
+    """Update an existing user account (fields travel in the body, never in the URL that gets logged)."""
+    email = auth.normalize_email(update.email) if update.email else None
+    username, phone, is_botanist = update.username, update.phone, update.is_botanist
     logger.info("Updating user", user_id=user_id, current_user_id=current_user.id)
 
     if user_id != current_user.id:

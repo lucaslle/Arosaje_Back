@@ -236,7 +236,7 @@ def test_cross_user_access_control(test_user_data):
     
     # L'utilisateur 1 tente de mettre à jour l'utilisateur 2
     update_data = {"username": "hacked"}
-    response = client.put(f"/users/{user2_id}", params=update_data, headers=user1_headers)
+    response = client.put(f"/users/{user2_id}", json=update_data, headers=user1_headers)
     
     # Devrait être interdit
     assert response.status_code == 403

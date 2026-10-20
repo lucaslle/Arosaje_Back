@@ -42,4 +42,5 @@ ENV OTEL_PYTHON_LOG_CORRELATION=true
 ENV OTEL_PYTHON_LOG_LEVEL=info
 
 # Start the application with auto-instrumentation
-CMD ["opentelemetry-instrument", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# migrate first so a pulled schema change never meets an old database
+CMD ["sh", "-c", "python -m app.migrate && exec opentelemetry-instrument uvicorn app.main:app --host 0.0.0.0 --port 8000"]

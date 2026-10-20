@@ -19,7 +19,6 @@ from app.routers import community as community_routes
 from app.business_metrics import BusinessMetrics
 from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
 
-models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="A_rosa_je API",
@@ -69,7 +68,7 @@ async def observability_middleware(request: Request, call_next):
     logger.info(
         "Request started",
         method=request.method,
-        url=str(request.url),
+        path=request.url.path,
         user_agent=request.headers.get("user-agent"),
         client_ip=request.client.host
     )
@@ -81,7 +80,7 @@ async def observability_middleware(request: Request, call_next):
                 f"{request.method} {request.url.path}",
                 attributes={
                     "http.method": request.method,
-                    "http.url": str(request.url),
+                    "http.target": request.url.path,
                     "http.user_agent": request.headers.get("user-agent", ""),
                     "http.client_ip": request.client.host,
                 }
@@ -102,7 +101,7 @@ async def observability_middleware(request: Request, call_next):
         logger.info(
             "Request completed",
             method=request.method,
-            url=str(request.url),
+            path=request.url.path,
             status_code=response.status_code,
             duration_ms=round(duration * 1000, 2)
         )
@@ -115,7 +114,7 @@ async def observability_middleware(request: Request, call_next):
         logger.error(
             "Request failed",
             method=request.method,
-            url=str(request.url),
+            path=request.url.path,
             error=str(e),
             duration_ms=round(duration * 1000, 2)
         )

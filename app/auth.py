@@ -29,11 +29,16 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
 
+def normalize_email(email: str) -> str:
+    # e-mails are matched by their hash, so "Lucas@Mail.fr" and "lucas@mail.fr" must hash the same
+    return email.strip().lower()
+
+
 def get_user_by_email(db: Session, email: str):
     """
     Trouve un utilisateur par email, en utilisant le hash pour la recherche
     """
-    email_hash = security_manager.hash_value(email)
+    email_hash = security_manager.hash_value(normalize_email(email))
     return db.query(models.User).filter(models.User.email_hash == email_hash).first()
 
 
@@ -52,13 +57,12 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     try:
         # Décodage du token JWT
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        email: str = payload.get("sub")
-        if email is None:
-            raise credentials_exception
-    except JWTError:
+        # the subject is the user id: an e-mail would stop matching as soon as the member changes it
+        user_id = int(payload.get("sub"))
+    except (JWTError, TypeError, ValueError):
         raise credentials_exception
-    
-    user = get_user_by_email(db, email)
+
+    user = db.query(models.User).filter(models.User.id == user_id).first()
     if user is None:
         raise credentials_exception
     

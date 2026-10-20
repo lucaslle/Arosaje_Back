@@ -157,7 +157,7 @@ def test_update_user(test_user_token):
         "phone": "9876543210"
     }
     
-    response = client.put(f"/users/{user_id}", params=update_data, headers=headers)
+    response = client.put(f"/users/{user_id}", json=update_data, headers=headers)
     
     assert response.status_code == 200
     data = response.json()
@@ -182,7 +182,7 @@ def test_unauthorized_user_update(test_user_token, test_botanist_token):
         "phone": "1111111111"
     }
     
-    response = client.put(f"/users/{botanist_id}", params=update_data, headers=user_headers)
+    response = client.put(f"/users/{botanist_id}", json=update_data, headers=user_headers)
     
     # Devrait être interdit (403)
     assert response.status_code == 403
@@ -261,10 +261,10 @@ def test_delete_user_with_plants_keeps_lists_working():
     staying = register("staying@example.com", "staying", "0600000002")
     photo = lambda: {"photo": ("p.jpg", io.BytesIO(b"img"), "image/jpeg")}
 
-    assert client.post("/plants/", params={"name": "Leaving plant", "location": "A"}, files=photo(), headers=leaving).status_code == 200
-    staying_plant = client.post("/plants/", params={"name": "Staying plant", "location": "B"}, files=photo(), headers=staying).json()["id"]
+    assert client.post("/plants/", data={"name": "Leaving plant", "location": "A"}, files=photo(), headers=leaving).status_code == 200
+    staying_plant = client.post("/plants/", data={"name": "Staying plant", "location": "B"}, files=photo(), headers=staying).json()["id"]
     start, end = date.today() + timedelta(days=1), date.today() + timedelta(days=8)
-    client.put(f"/plants/{staying_plant}", params={"care_requested": True, "care_start": str(start), "care_end": str(end)}, headers=staying)
+    client.put(f"/plants/{staying_plant}", data={"care_requested": True, "care_start": str(start), "care_end": str(end)}, headers=staying)
     offer_id = client.post(f"/plants/{staying_plant}/care-offers", headers=leaving).json()["id"]
     assert client.put(f"/care-offers/{offer_id}/accept", headers=staying).status_code == 200
 
@@ -278,6 +278,40 @@ def test_delete_user_with_plants_keeps_lists_working():
     assert not os.path.exists(os.path.join(settings.UPLOAD_DIRECTORY, os.path.basename(leaving_photo)))
     mine = client.get("/my_plants/", headers=staying).json()
     assert next(p for p in mine if p["id"] == staying_plant)["in_care_id"] is None
+
+def test_email_is_case_insensitive():
+    """Une adresse saisie avec des majuscules ou des espaces désigne le même compte"""
+    body = {"email": "Mixed.Case@Example.com", "username": "mixedcase", "phone": "0600000099", "password": "password123"}
+    assert client.post("/users/", json=body).status_code == 200
+    assert client.post("/users/", json={**body, "email": "mixed.case@example.com", "username": "other"}).status_code == 400
+    response = client.post("/token", data={"username": "  MIXED.case@example.com ", "password": "password123"})
+    assert response.status_code == 200
+
+def test_token_survives_email_change():
+    """Le token désigne le membre par son id : changer d'e-mail ne déconnecte pas"""
+    body = {"email": "before@example.com", "username": "mover", "phone": "0600000098", "password": "password123"}
+    user_id = client.post("/users/", json=body).json()["id"]
+    headers = {"Authorization": f"Bearer {client.post('/token', data={'username': body['email'], 'password': 'password123'}).json()['access_token']}"}
+    assert client.put(f"/users/{user_id}", json={"email": "after@example.com"}, headers=headers).status_code == 200
+    assert client.get("/users/me/", headers=headers).json()["email"] == "after@example.com"
+
+def test_old_email_tokens_are_rejected():
+    """Les anciens tokens dont le sujet était l'e-mail ne sont plus acceptés"""
+    from jose import jwt
+    from datetime import datetime, timedelta
+    token = jwt.encode({"sub": "before@example.com", "exp": datetime.utcnow() + timedelta(minutes=5)}, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    assert client.get("/users/me/", headers={"Authorization": f"Bearer {token}"}).status_code == 401
+
+def test_personal_data_stays_out_of_request_logs(capsys):
+    """E-mail et téléphone passent dans le corps de la requête, pas dans l'URL que le middleware journalise"""
+    body = {"email": "quiet@example.com", "username": "quiet", "phone": "0600000097", "password": "password123"}
+    user_id = client.post("/users/", json=body).json()["id"]
+    headers = {"Authorization": f"Bearer {client.post('/token', data={'username': body['email'], 'password': 'password123'}).json()['access_token']}"}
+    capsys.readouterr()
+    assert client.put(f"/users/{user_id}", json={"email": "secret.address@example.com", "phone": "0611223344"}, headers=headers).status_code == 200
+    logs = capsys.readouterr().out
+    assert f"/users/{user_id}" in logs
+    assert "secret.address" not in logs and "0611223344" not in logs
 
 # Nettoyer la base de données de test après les tests
 def teardown_module():
