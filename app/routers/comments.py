@@ -51,6 +51,7 @@ async def create_comment(
 @trace_function("get_plant_comments")
 async def get_plant_comments(
         plant_id: int,
+        current_user: models.User = Depends(auth.get_current_user),
         db: Session = Depends(get_db)
 ):
     """Get all comments for a specific plant."""

@@ -196,6 +196,11 @@ def test_get_plant_comments(test_user_token, test_plant, test_comment):
     assert comment["plant_id"] == test_plant
     assert set(comment["user"]) == {"id", "username", "is_botanist"}
 
+def test_get_plant_comments_requires_login(test_plant, test_comment):
+    """Les commentaires (et les noms de leurs auteurs) ne sont pas visibles sans connexion"""
+    response = client.get(f"/plants/{test_plant}/comments/")
+    assert response.status_code == 401
+
 def test_get_comments_nonexistent_plant(test_user_token):
     """Test de récupération des commentaires d'une plante inexistante"""
     headers = {"Authorization": f"Bearer {test_user_token['token']}"}
