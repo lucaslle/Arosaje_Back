@@ -26,10 +26,6 @@ RUN mkdir -p photos logs && chown -R appuser:appuser /app
 # Copy application code
 COPY --chown=appuser:appuser . .
 
-# Copy the observability configuration
-COPY --chown=appuser:appuser app/main.py app/main.py
-COPY --chown=appuser:appuser app/config.py app/config.py
-
 # Expose ports
 EXPOSE 8000
 

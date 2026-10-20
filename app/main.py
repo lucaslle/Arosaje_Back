@@ -1,5 +1,4 @@
 import os
-import fastapi.responses
 from datetime import datetime as dt
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Request
@@ -15,7 +14,6 @@ from app.routers import users as users_routes
 from app.routers import plants as plants_routes
 from app.routers import comments as comments_routes
 
-base_url = "localhost:8000"
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
@@ -29,13 +27,13 @@ if settings.ENABLE_OBSERVABILITY:
 logger = get_logger()
 tracer = get_tracer()
 
-os.makedirs("photos", exist_ok=True)
+os.makedirs(settings.UPLOAD_DIRECTORY, exist_ok=True)
 
-app.mount("/photos", StaticFiles(directory="photos"), name="photos")
+app.mount("/photos", StaticFiles(directory=settings.UPLOAD_DIRECTORY), name="photos")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5000"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
@@ -121,15 +119,6 @@ async def health_check():
         "service": "plant-care-api",
         "version": "1.0.0"
     }
-
-@app.options("/{rest_of_path:path}")
-async def preflight_handler():
-    response = fastapi.responses.Response(status_code=204)
-    response.headers["Access-Control-Allow-Origin"] = "http://localhost:5000"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
-    response.headers["Access-Control-Allow-Headers"] = "*"
-    response.headers["Access-Control-Allow-Credentials"] = "true"
-    return response
 
 # Register API routers
 app.include_router(auth_routes.router)

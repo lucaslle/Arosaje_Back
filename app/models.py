@@ -1,6 +1,6 @@
 from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, DateTime
 from sqlalchemy.orm import relationship
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 from datetime import datetime, timezone
 from app.security import security_manager
 
@@ -26,7 +26,8 @@ class User(Base):
     
     owned_plants = relationship("Plant",
                                back_populates="owner",
-                               foreign_keys="[Plant.owner_id]")
+                               foreign_keys="[Plant.owner_id]",
+                               cascade="all, delete-orphan")
     comments = relationship("Comment", 
                            back_populates="user",
                            cascade="all, delete-orphan")
@@ -71,17 +72,15 @@ class Plant(Base):
     care_instructions = Column(String)
     photo_url = Column(String)
     owner_id = Column(Integer, ForeignKey("users.id"))
-    created_at = Column(DateTime, default=datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    # in_care_id is the member currently looking after the plant
     in_care_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    plant_sitting = Column(Integer, ForeignKey("users.id"), nullable=True)
+    care_requested = Column(Boolean, default=False, nullable=False)
     
     owner = relationship("User",
                         foreign_keys=[owner_id],
                         back_populates="owned_plants",
                         lazy="joined")
-    sitter = relationship("User",
-                         foreign_keys=[plant_sitting],
-                         primaryjoin="Plant.plant_sitting == User.id")
     comments = relationship("Comment", 
                           back_populates="plant",
                           cascade="all, delete-orphan")
@@ -89,10 +88,6 @@ class Plant(Base):
     @property
     def in_care(self):
         return self.in_care_id is not None
-    
-    @property
-    def plant_sitting_user(self):
-        return self.sitter
 
 
 class Comment(Base):

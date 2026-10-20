@@ -3,9 +3,9 @@ import os
 # Configuration spécifique pour les tests
 os.environ["TESTING"] = "True"
 os.environ["ENCRYPTION_KEY"] = "test-encryption-key-for-testing"
-os.environ["ENCRYPTION_ENABLED"] = "True"
 os.environ["TEST_DATABASE_URL"] = "sqlite:///./test_a_rosa_je.db"
 
+import io
 import pytest
 from fastapi.testclient import TestClient
 import json
@@ -239,6 +239,42 @@ def test_delete_user(test_user_token):
         "password": temp_user_data["password"]
     })
     assert login_response.status_code == 401
+
+def test_unauthorized_user_delete(test_user_token, test_botanist_token):
+    """Un utilisateur ne peut pas supprimer le compte d'un autre"""
+    botanist_headers = {"Authorization": f"Bearer {test_botanist_token['token']}"}
+    response = client.delete("/users/", params={"id": test_user_token["user_id"]}, headers=botanist_headers)
+    assert response.status_code == 403
+
+    user_headers = {"Authorization": f"Bearer {test_user_token['token']}"}
+    assert client.get("/users/me/", headers=user_headers).status_code == 200
+
+def test_delete_user_with_plants_keeps_lists_working():
+    """Supprimer un compte qui possède une plante et en garde une autre ne casse pas les listes"""
+    def register(email, username, phone):
+        assert client.post("/users/", json={"email": email, "username": username, "phone": phone, "password": "password123"}).status_code == 200
+        token = client.post("/token", data={"username": email, "password": "password123"}).json()["access_token"]
+        return {"Authorization": f"Bearer {token}"}
+
+    leaving = register("leaving@example.com", "leaving", "0600000001")
+    staying = register("staying@example.com", "staying", "0600000002")
+    photo = lambda: {"photo": ("p.jpg", io.BytesIO(b"img"), "image/jpeg")}
+
+    assert client.post("/plants/", params={"name": "Leaving plant", "location": "A"}, files=photo(), headers=leaving).status_code == 200
+    staying_plant = client.post("/plants/", params={"name": "Staying plant", "location": "B"}, files=photo(), headers=staying).json()["id"]
+    client.put(f"/plants/{staying_plant}", params={"care_requested": True}, headers=staying)
+    assert client.put(f"/plants/{staying_plant}/start-care", headers=leaving).status_code == 200
+
+    leaving_photo = client.get("/my_plants/", headers=leaving).json()[0]["photo_url"]
+    leaving_id = client.get("/users/me/", headers=leaving).json()["id"]
+    assert client.delete("/users/", params={"id": leaving_id}, headers=leaving).status_code == 200
+
+    response = client.get("/all_plants/", headers=staying)
+    assert response.status_code == 200
+    assert "Leaving plant" not in [plant["name"] for plant in response.json()]
+    assert not os.path.exists(os.path.join(settings.UPLOAD_DIRECTORY, os.path.basename(leaving_photo)))
+    mine = client.get("/my_plants/", headers=staying).json()
+    assert next(p for p in mine if p["id"] == staying_plant)["in_care_id"] is None
 
 # Nettoyer la base de données de test après les tests
 def teardown_module():

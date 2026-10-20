@@ -3,7 +3,6 @@ import os
 # Setup test environment
 os.environ["TESTING"] = "True"
 os.environ["ENCRYPTION_KEY"] = "test-encryption-key-for-testing"
-os.environ["ENCRYPTION_ENABLED"] = "True"
 os.environ["TEST_DATABASE_URL"] = "sqlite:///./test_a_rosa_je.db"
 
 from fastapi.testclient import TestClient
@@ -11,6 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from app.database import Base, get_db
 from app.main import app
+from app.config import settings
 
 TEST_DATABASE_URL = "sqlite:///./test_a_rosa_je.db"
 engine = create_engine(TEST_DATABASE_URL)
@@ -27,8 +27,6 @@ def override_get_db():
 app.dependency_overrides[get_db] = override_get_db
 client = TestClient(app)
 
-# ensure photos dir exists
-os.makedirs("photos", exist_ok=True)
 
 
 def test_health_endpoint():
@@ -40,15 +38,22 @@ def test_health_endpoint():
 
 
 def test_preflight_options():
-    response = client.options("/some/random/path")
-    assert response.status_code == 204
+    headers = {"Origin": "http://localhost:5000", "Access-Control-Request-Method": "POST"}
+    response = client.options("/plants/", headers=headers)
+    assert response.status_code == 200
     assert response.headers["Access-Control-Allow-Origin"] == "http://localhost:5000"
     assert "Access-Control-Allow-Methods" in response.headers
 
 
+def test_preflight_rejects_unknown_origin():
+    headers = {"Origin": "http://evil.example", "Access-Control-Request-Method": "POST"}
+    response = client.options("/plants/", headers=headers)
+    assert "Access-Control-Allow-Origin" not in response.headers
+
+
 def test_static_photo_serving():
     filename = "test_main_photo.txt"
-    path = os.path.join("photos", filename)
+    path = os.path.join(settings.UPLOAD_DIRECTORY, filename)
     with open(path, "w") as f:
         f.write("hello")
 

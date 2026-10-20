@@ -4,7 +4,6 @@ import os
 # Configuration spécifique pour les tests
 os.environ["TESTING"] = "True"
 os.environ["ENCRYPTION_KEY"] = "test-encryption-key-for-testing"
-os.environ["ENCRYPTION_ENABLED"] = "True"
 os.environ["TEST_DATABASE_URL"] = "sqlite:///./test_a_rosa_je.db"
 
 import pytest
@@ -39,8 +38,6 @@ app.dependency_overrides[get_db] = override_get_db
 # Client de test
 client = TestClient(app)
 
-# Assurons-nous que le répertoire de photos pour les tests existe
-os.makedirs("photos", exist_ok=True)
 
 @pytest.fixture(scope="module")
 def test_user_token():
@@ -223,6 +220,11 @@ def test_list_all_plants_except_users(test_user_token, test_botanist_token, test
     assert botanist_plant_id in plant_ids
     assert test_plant not in plant_ids
 
+    # Le propriétaire n'expose que des infos publiques (ni hash, ni email, ni téléphone)
+    owner = next(plant for plant in data if plant["id"] == botanist_plant_id)["owner"]
+    assert set(owner) == {"id", "username", "is_botanist"}
+    assert owner["is_botanist"] is True
+
 def test_update_plant(test_user_token, test_plant):
     """Test de mise à jour d'une plante"""
     headers = {"Authorization": f"Bearer {test_user_token['token']}"}
@@ -253,8 +255,22 @@ def test_update_plant(test_user_token, test_plant):
 def test_botanist_care_lifecycle(test_user_token, test_botanist_token, test_plant):
     """Test du cycle de vie des soins d'une plante par un botaniste"""
     botanist_headers = {"Authorization": f"Bearer {test_botanist_token['token']}"}
-    
-    # Étape 1: Le botaniste commence à prendre soin de la plante
+    owner_headers = {"Authorization": f"Bearer {test_user_token['token']}"}
+
+    # Sans demande du propriétaire, la plante ne peut pas être prise en garde
+    response = client.put(f"/plants/{test_plant}/start-care", headers=botanist_headers)
+    assert response.status_code == 409
+
+    # Étape 1: Le propriétaire demande une garde, la plante apparaît dans les demandes
+    response = client.put(f"/plants/{test_plant}", params={"care_requested": True}, headers=owner_headers)
+    assert response.status_code == 200
+    assert response.json()["care_requested"] is True
+
+    response = client.get("/care-requests/", headers=botanist_headers)
+    assert response.status_code == 200
+    assert test_plant in [plant["id"] for plant in response.json()]
+
+    # Étape 2: Le botaniste commence à prendre soin de la plante, la demande est close
     response = client.put(
         f"/plants/{test_plant}/start-care",
         headers=botanist_headers
@@ -263,14 +279,10 @@ def test_botanist_care_lifecycle(test_user_token, test_botanist_token, test_plan
     assert response.status_code == 200
     data = response.json()
     assert data["in_care_id"] == test_botanist_token["user_id"]
-    
-    # Étape 2: Vérifier que la plante apparaît dans les demandes de soin
+    assert data["care_requested"] is False
+
     response = client.get("/care-requests/", headers=botanist_headers)
-    assert response.status_code == 200
-    care_requests = response.json()
-    
-    plant_ids = [plant["id"] for plant in care_requests]
-    assert test_plant in plant_ids
+    assert test_plant not in [plant["id"] for plant in response.json()]
     
     # Étape 3: Le botaniste termine les soins
     response = client.put(
@@ -281,7 +293,6 @@ def test_botanist_care_lifecycle(test_user_token, test_botanist_token, test_plan
     assert response.status_code == 200
     data = response.json()
     assert data["in_care_id"] is None
-    assert data["plant_sitting"] is None
     
     # Étape 4: Vérifier que la plante n'apparaît plus dans les demandes de soin
     response = client.get("/care-requests/", headers=botanist_headers)
@@ -291,6 +302,54 @@ def test_botanist_care_lifecycle(test_user_token, test_botanist_token, test_plan
     if care_requests:  # Si la liste n'est pas vide
         plant_ids = [plant["id"] for plant in care_requests]
         assert test_plant not in plant_ids
+
+def test_cannot_take_over_care(test_user_token, test_botanist_token, test_plant):
+    """Une plante déjà gardée ne peut pas être reprise par un autre membre"""
+    owner_headers = {"Authorization": f"Bearer {test_user_token['token']}"}
+    botanist_headers = {"Authorization": f"Bearer {test_botanist_token['token']}"}
+    third = {"email": "third@example.com", "username": "third", "phone": "0102030405", "password": "thirdpassword"}
+    assert client.post("/users/", json=third).status_code == 200
+    third_token = client.post("/token", data={"username": third["email"], "password": third["password"]}).json()["access_token"]
+
+    client.put(f"/plants/{test_plant}", params={"care_requested": True}, headers=owner_headers)
+    assert client.put(f"/plants/{test_plant}/start-care", headers=botanist_headers).status_code == 200
+
+    response = client.put(f"/plants/{test_plant}/start-care", headers={"Authorization": f"Bearer {third_token}"})
+    assert response.status_code == 409
+
+    plant = next(p for p in client.get("/my_plants/", headers=owner_headers).json() if p["id"] == test_plant)
+    assert plant["in_care_id"] == test_botanist_token["user_id"]
+
+def test_photo_upload_rules(test_user_token, test_image):
+    """Les photos reçoivent un nom unique et seuls les formats image sont acceptés"""
+    headers = {"Authorization": f"Bearer {test_user_token['token']}"}
+    params = {"name": "Photo Plant", "location": "Here"}
+
+    photo_urls = []
+    for _ in range(2):
+        with open(test_image, "rb") as img:
+            response = client.post("/plants/", params=params, files={"photo": ("same_name.jpg", img, "image/jpeg")}, headers=headers)
+        assert response.status_code == 200
+        photo_urls.append(response.json()["photo_url"])
+    assert photo_urls[0] != photo_urls[1]
+    assert all(url.startswith("photos/") for url in photo_urls)
+
+    response = client.post("/plants/", params=params, files={"photo": ("page.html", io.BytesIO(b"<script>"), "text/html")}, headers=headers)
+    assert response.status_code == 400
+
+    # après remplacement de la photo, l'URL stockée reste un chemin relatif valide
+    plant_id = client.get("/my_plants/", headers=headers).json()[-1]["id"]
+    with open(test_image, "rb") as img:
+        response = client.put(f"/plants/{plant_id}", files={"photo": ("new.jpg", img, "image/jpeg")}, headers=headers)
+    assert response.status_code == 200
+    listed = next(p for p in client.get("/my_plants/", headers=headers).json() if p["id"] == plant_id)
+    assert listed["photo_url"].startswith("photos/")
+    assert os.path.isfile(os.path.join(settings.UPLOAD_DIRECTORY, os.path.basename(listed["photo_url"])))
+
+def test_created_at_is_computed_per_row():
+    """La date de création doit être calculée à l'insertion, pas une seule fois au démarrage"""
+    from app import models
+    assert models.Plant.__table__.c.created_at.default.is_callable
 
 def test_delete_plant(test_user_token):
     """Test de suppression d'une plante"""
@@ -330,6 +389,19 @@ def test_delete_plant(test_user_token):
     plant_ids = [plant["id"] for plant in plants]
     assert plant_id not in plant_ids
 
+def test_unauthorized_plant_delete(test_user_token, test_botanist_token, test_plant):
+    """Ni un anonyme ni un autre utilisateur ne peut supprimer la plante"""
+    anonymous_response = client.delete("/plants", params={"plant_id": test_plant})
+    assert anonymous_response.status_code == 401
+
+    botanist_headers = {"Authorization": f"Bearer {test_botanist_token['token']}"}
+    response = client.delete("/plants", params={"plant_id": test_plant}, headers=botanist_headers)
+    assert response.status_code == 403
+
+    owner_headers = {"Authorization": f"Bearer {test_user_token['token']}"}
+    plant_ids = [plant["id"] for plant in client.get("/my_plants/", headers=owner_headers).json()]
+    assert test_plant in plant_ids
+
 def test_unauthorized_plant_update(test_user_token, test_botanist_token, test_plant):
     """Test de tentative de mise à jour non autorisée d'une plante"""
     botanist_headers = {"Authorization": f"Bearer {test_botanist_token['token']}"}
@@ -356,8 +428,3 @@ def test_unauthorized_plant_update(test_user_token, test_botanist_token, test_pl
 def teardown_module():
     Base.metadata.drop_all(bind=engine)
     os.remove("./test_a_rosa_je.db")
-    
-    # Nettoyer également les photos de test
-    for file in os.listdir("photos"):
-        if file.startswith(("test_", "temp_")):
-            os.remove(os.path.join("photos", file))

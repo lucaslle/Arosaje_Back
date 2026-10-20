@@ -3,6 +3,7 @@ from pydantic import EmailStr
 from sqlalchemy.orm import Session
 
 from app import models, schemas, auth
+from app.routers.plants import delete_photo
 from app.database import get_db
 from app.security import security_manager
 from app.observability import observability, trace_function, get_logger
@@ -14,18 +15,18 @@ logger = get_logger()
 @trace_function("user_creation")
 async def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
     """Create a new user with hashing and encryption."""
-    logger.info("Creating new user", email=user.email, username=user.username, is_botanist=user.is_botanist)
+    logger.info("Creating new user", is_botanist=user.is_botanist)
 
     email_hash = security_manager.hash_value(user.email)
     db_user = db.query(models.User).filter(models.User.email_hash == email_hash).first()
     if db_user:
-        logger.warning("User creation failed - email already exists", email=user.email)
+        logger.warning("User creation failed - email already exists")
         raise HTTPException(status_code=400, detail="Email already registered")
 
     username_hash = security_manager.hash_value(user.username)
     db_user = db.query(models.User).filter(models.User.username_hash == username_hash).first()
     if db_user:
-        logger.warning("User creation failed - username already exists", username=user.username)
+        logger.warning("User creation failed - username already exists")
         raise HTTPException(status_code=400, detail="Username already taken")
 
     db_user = models.User(
@@ -87,14 +88,14 @@ async def edit_user(
         email_hash = security_manager.hash_value(email)
         existing_user = db.query(models.User).filter(models.User.email_hash == email_hash).first()
         if existing_user and existing_user.id != user_id:
-            logger.warning("Email already taken", email=email, user_id=user_id)
+            logger.warning("Email already taken", user_id=user_id)
             raise HTTPException(status_code=400, detail="Email already registered")
 
     if username and username != current_user.username:
         username_hash = security_manager.hash_value(username)
         existing_user = db.query(models.User).filter(models.User.username_hash == username_hash).first()
         if existing_user and existing_user.id != user_id:
-            logger.warning("Username already taken", username=username, user_id=user_id)
+            logger.warning("Username already taken", user_id=user_id)
             raise HTTPException(status_code=400, detail="Username already taken")
 
     if email is not None:
@@ -123,26 +124,36 @@ async def edit_user(
         "is_botanist": db_user.is_botanist
     }
 
-@router.get("/users/me/", tags=["Users"])
+@router.get("/users/me/", response_model=schemas.User, tags=["Users"])
 @trace_function("get_current_user")
 async def read_users_me(current_user: models.User = Depends(auth.get_current_user)):
     """Get details of the currently authenticated user."""
     logger.info("Getting current user details", user_id=current_user.id)
     return current_user
 
-@router.delete("/users/", tags=["Users"])
+@router.delete("/users/", response_model=schemas.User, tags=["Users"])
 @trace_function("user_deletion")
 async def delete_user(id: int, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     """Delete a user account."""
     logger.info("Deleting user", user_id=id, current_user_id=current_user.id)
+
+    if id != current_user.id:
+        logger.warning("Unauthorized user deletion attempt", target_user_id=id, current_user_id=current_user.id)
+        raise HTTPException(status_code=403, detail="Not authorized to delete other users")
 
     db_user = db.query(models.User).filter(models.User.id == id).first()
     if not db_user:
         logger.error("User not found for deletion", user_id=id)
         raise HTTPException(status_code=404, detail="User not found")
 
+    deleted_user = schemas.User.model_validate(db_user)
+    # plants this member was looking after go back to their owners; owned plants are deleted by cascade
+    db.query(models.Plant).filter(models.Plant.in_care_id == id).update({"in_care_id": None}, synchronize_session=False)
+    photo_urls = [plant.photo_url for plant in db_user.owned_plants]
     db.delete(db_user)
     db.commit()
+    for photo_url in photo_urls:
+        delete_photo(photo_url)
 
     logger.info("User deleted successfully", user_id=id)
-    return db_user
+    return deleted_user

@@ -28,6 +28,15 @@ class User(UserBase):
     class Config:
         from_attributes = True
 
+class UserPublic(pydantic.BaseModel):
+    """What other users may see about a user: never contact details or password hash"""
+    id: int
+    username: str | None
+    is_botanist: bool
+
+    class Config:
+        from_attributes = True
+
 class PlantBase(pydantic.BaseModel):
     name: str
     location: str
@@ -39,10 +48,23 @@ class PlantCreate(PlantBase):
 class Plant(PlantBase):
     id: int
     photo_url: str | None
-    owner: User
+    owner_id: int
+    owner: UserPublic
     created_at: datetime.datetime
     in_care: bool
-    plant_sitting: int | None
+    in_care_id: int | None
+    care_requested: bool
+
+    class Config:
+        from_attributes = True
+
+class Comment(pydantic.BaseModel):
+    id: int
+    plant_id: int
+    user_id: int
+    comment: str
+    time_stamp: datetime.datetime
+    user: UserPublic
 
     class Config:
         from_attributes = True

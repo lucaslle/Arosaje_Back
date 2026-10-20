@@ -4,7 +4,6 @@ import os
 # Configuration spécifique pour les tests
 os.environ["TESTING"] = "True"
 os.environ["ENCRYPTION_KEY"] = "test-encryption-key-for-testing"
-os.environ["ENCRYPTION_ENABLED"] = "True"
 os.environ["TEST_DATABASE_URL"] = "sqlite:///./test_a_rosa_je.db"
 
 import pytest

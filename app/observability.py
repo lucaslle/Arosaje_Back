@@ -9,6 +9,7 @@ import inspect
 from typing import Optional
 from functools import wraps
 from contextlib import contextmanager
+from contextvars import ContextVar
 from fastapi import FastAPI, Request
 
 from opentelemetry import trace, metrics
@@ -35,12 +36,14 @@ comments_counter = None
 active_users_gauge = None
 plants_in_care_gauge = None
 
+# one value per request: a plain attribute was shared by every concurrent request
+_current_user_id: ContextVar[Optional[str]] = ContextVar("current_user_id", default=None)
+
 class ObservabilityManager:
     """Gestionnaire d'observabilité avec support complet OpenTelemetry"""
 
     def __init__(self):
         self.logger = structlog.get_logger()
-        self.current_user_id: Optional[str] = None
         self.tracer_provider: Optional[TracerProvider] = None
         self.meter_provider: Optional[MeterProvider] = None
         self.tracer = None
@@ -292,6 +295,14 @@ class ObservabilityManager:
                 plants_in_care_gauge.set(count)
         except Exception as e:
             print(f"Error updating plants in care metric: {e}")
+
+    @property
+    def current_user_id(self) -> Optional[str]:
+        return _current_user_id.get()
+
+    @current_user_id.setter
+    def current_user_id(self, user_id: Optional[str]):
+        _current_user_id.set(user_id)
 
     def set_current_user(self, user_id: str):
         """Définit l'utilisateur courant pour le contexte"""

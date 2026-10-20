@@ -2,14 +2,14 @@ from datetime import datetime as dt
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app import models, auth
+from app import models, schemas, auth
 from app.database import get_db
 from app.observability import observability, trace_function, get_logger
 
 router = APIRouter()
 logger = get_logger()
 
-@router.post("/comments/", tags=["Comments"])
+@router.post("/comments/", response_model=schemas.Comment, tags=["Comments"])
 @trace_function("comment_creation")
 async def create_comment(
         plant_id: int,
@@ -47,7 +47,7 @@ async def create_comment(
 
     return db_comment
 
-@router.get("/plants/{plant_id}/comments/", tags=["Comments"])
+@router.get("/plants/{plant_id}/comments/", response_model=list[schemas.Comment], tags=["Comments"])
 @trace_function("get_plant_comments")
 async def get_plant_comments(
         plant_id: int,
@@ -66,7 +66,7 @@ async def get_plant_comments(
     logger.info("Plant comments retrieved", plant_id=plant_id, count=len(comments))
     return comments
 
-@router.put("/comments/{comment_id}", tags=["Comments"])
+@router.put("/comments/{comment_id}", response_model=schemas.Comment, tags=["Comments"])
 @trace_function("comment_update")
 async def update_comment(
         comment_id: int,
@@ -97,7 +97,7 @@ async def update_comment(
     logger.info("Comment updated successfully", comment_id=comment_id)
     return db_comment
 
-@router.delete("/comments/{comment_id}", tags=["Comments"])
+@router.delete("/comments/{comment_id}", response_model=schemas.Comment, tags=["Comments"])
 @trace_function("comment_deletion")
 async def delete_comment(
         comment_id: int,
@@ -125,13 +125,14 @@ async def delete_comment(
             detail="Not authorized to delete this comment. Must be comment author or plant owner."
         )
 
+    deleted_comment = schemas.Comment.model_validate(db_comment)
     db.delete(db_comment)
     db.commit()
 
     logger.info("Comment deleted successfully", comment_id=comment_id)
-    return db_comment
+    return deleted_comment
 
-@router.get("/users/{user_id}/comments/", tags=["Comments"])
+@router.get("/users/{user_id}/comments/", response_model=list[schemas.Comment], tags=["Comments"])
 @trace_function("get_user_comments")
 async def get_user_comments(
         user_id: int,

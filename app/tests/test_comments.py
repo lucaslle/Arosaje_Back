@@ -4,7 +4,6 @@ import os
 # Configuration spécifique pour les tests
 os.environ["TESTING"] = "True"
 os.environ["ENCRYPTION_KEY"] = "test-encryption-key-for-testing"
-os.environ["ENCRYPTION_ENABLED"] = "True"
 os.environ["TEST_DATABASE_URL"] = "sqlite:///./test_a_rosa_je.db"
 
 import pytest
@@ -37,8 +36,6 @@ app.dependency_overrides[get_db] = override_get_db
 # Client de test
 client = TestClient(app)
 
-# Assurons-nous que le répertoire de photos pour les tests existe
-os.makedirs("photos", exist_ok=True)
 
 @pytest.fixture(scope="module")
 def test_user_token():
@@ -197,6 +194,7 @@ def test_get_plant_comments(test_user_token, test_plant, test_comment):
     assert "user_id" in comment
     assert "plant_id" in comment
     assert comment["plant_id"] == test_plant
+    assert set(comment["user"]) == {"id", "username", "is_botanist"}
 
 def test_get_comments_nonexistent_plant(test_user_token):
     """Test de récupération des commentaires d'une plante inexistante"""

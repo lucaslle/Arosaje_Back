@@ -5,7 +5,6 @@ from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
 from app.database import get_db
 from app.config import settings
 from app import models, schemas
@@ -59,10 +58,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     except JWTError:
         raise credentials_exception
     
-    # Recherche de l'utilisateur par hash d'email
-    email_hash = security_manager.hash_value(email)
-    user = db.query(models.User).filter(models.User.email_hash == email_hash).first()
-    
+    user = get_user_by_email(db, email)
     if user is None:
         raise credentials_exception
     
@@ -75,12 +71,3 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         is_active=user.is_active,
         is_botanist=user.is_botanist
     )
-
-def authenticate_user(db: Session, email: str, password: str):
-    """Authenticate a user with email and password, handling encrypted fields."""
-    user = get_user_by_email(db, email)
-    if not user:
-        return False
-    if not verify_password(password, user.hashed_password):
-        return False
-    return user
