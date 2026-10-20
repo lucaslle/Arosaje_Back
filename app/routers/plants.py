@@ -1,9 +1,12 @@
 import os
+from datetime import date
 from uuid import uuid4
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app import models, schemas, auth
+from app.care_rules import expire_cares
 from app.config import settings
 from app.database import get_db
 from app.observability import observability, trace_function, get_logger
@@ -37,6 +40,38 @@ def delete_photo(photo_url: str | None):
             os.remove(path)
     except OSError as e:
         logger.warning("Error removing photo", error=str(e))
+
+
+def set_care_request(plant: models.Plant, requested: bool, start: date | None, end: date | None):
+    """Open or close the owner's request for a sitter, with the dates it covers."""
+    if not requested:
+        if plant.care_requested:
+            for offer in plant.care_offers:
+                if offer.status == models.OfferStatus.PENDING.value:
+                    offer.status = models.OfferStatus.CANCELLED.value
+            plant.care_start = None
+            plant.care_end = None
+        plant.care_requested = False
+        return
+
+    if plant.in_care_id is not None:
+        raise HTTPException(status_code=409, detail="Plant is already looked after")
+    if start is None or end is None:
+        raise HTTPException(status_code=400, detail="care_start and care_end are required to ask for a sitter")
+    if end < start or end < date.today():
+        raise HTTPException(status_code=400, detail="care_end must be after care_start and not in the past")
+    if not plant.care_requested:
+        plant.care_requested_at = models.utcnow()
+    plant.care_requested = True
+    plant.care_start = start
+    plant.care_end = end
+
+
+def search_plants(query, q: str | None, limit: int, offset: int):
+    if q:
+        pattern = f"%{q}%"
+        query = query.filter(or_(models.Plant.name.ilike(pattern), models.Plant.location.ilike(pattern)))
+    return query.order_by(models.Plant.id.desc()).offset(offset).limit(limit).all()
 
 
 def get_plant_or_404(db: Session, plant_id: int) -> models.Plant:
@@ -86,6 +121,8 @@ async def update_plant(
         location: str = None,
         care_instructions: str | None = None,
         care_requested: bool | None = None,
+        care_start: date | None = None,
+        care_end: date | None = None,
         photo: UploadFile = File(None),
         current_user: models.User = Depends(auth.get_current_user),
         db: Session = Depends(get_db)
@@ -109,7 +146,7 @@ async def update_plant(
     if care_instructions is not None:
         plant.care_instructions = care_instructions
     if care_requested is not None:
-        plant.care_requested = care_requested
+        set_care_request(plant, care_requested, care_start or plant.care_start, care_end or plant.care_end)
 
     old_photo = None
     if photo and photo.filename:
@@ -142,13 +179,15 @@ async def delete_plant(
 
     # the deleted row can no longer be loaded after commit, serialize it first
     deleted_plant = schemas.Plant.model_validate(plant)
+    log_photos = [log.photo_url for log in plant.care_logs]
     try:
         db.delete(plant)
         db.commit()
     except Exception as e:
         logger.error("Error deleting plant", plant_id=plant_id, error=str(e))
         raise HTTPException(status_code=500, detail="Error deleting plant")
-    delete_photo(deleted_plant.photo_url)
+    for photo_url in [deleted_plant.photo_url, *log_photos]:
+        delete_photo(photo_url)
     logger.info("Plant deleted successfully", plant_id=plant_id)
     return deleted_plant
 
@@ -159,6 +198,7 @@ async def list_plants_users_plant(
         db: Session = Depends(get_db)
 ):
     """List all plants owned by the current user."""
+    expire_cares(db)
     plants = db.query(models.Plant).filter(models.Plant.owner_id == current_user.id).all()
     logger.info("User plants retrieved", user_id=current_user.id, count=len(plants))
     return plants
@@ -166,40 +206,17 @@ async def list_plants_users_plant(
 @router.get("/all_plants/", response_model=list[schemas.Plant], tags=["Plants"])
 @trace_function("list_all_plants")
 async def list_all_plants_except_users(
+        q: str | None = Query(None, max_length=100),
+        limit: int = Query(24, ge=1, le=100),
+        offset: int = Query(0, ge=0),
         current_user: models.User = Depends(auth.get_current_user),
         db: Session = Depends(get_db)
 ):
-    """List all plants except those owned by the current user."""
-    plants = db.query(models.Plant).filter(models.Plant.owner_id != current_user.id).all()
+    """List all plants except those owned by the current user, newest first, filtered by name or location."""
+    expire_cares(db)
+    plants = search_plants(db.query(models.Plant).filter(models.Plant.owner_id != current_user.id), q, limit, offset)
     logger.info("All plants retrieved", user_id=current_user.id, count=len(plants))
     return plants
-
-@router.put("/plants/{plant_id}/start-care", response_model=schemas.Plant, tags=["Plant Care"])
-@trace_function("start_plant_care")
-async def start_plant_care(
-        plant_id: int,
-        current_user: models.User = Depends(auth.get_current_user),
-        db: Session = Depends(get_db)
-):
-    """Take care of a plant whose owner asked for a sitter."""
-    logger.info("Starting plant care", plant_id=plant_id, sitter_id=current_user.id)
-
-    # check and write in one statement so two members cannot both take the plant
-    taken = db.query(models.Plant).filter(
-        models.Plant.id == plant_id,
-        models.Plant.owner_id != current_user.id,
-        models.Plant.in_care_id.is_(None),
-        models.Plant.care_requested.is_(True),
-    ).update({"in_care_id": current_user.id, "care_requested": False}, synchronize_session=False)
-    db.commit()
-
-    plant = get_plant_or_404(db, plant_id)
-    if not taken:
-        raise HTTPException(status_code=409, detail="Plant is not waiting for a sitter")
-
-    observability.record_care_request("start")
-    logger.info("Plant care started", plant_id=plant_id, sitter_id=current_user.id)
-    return plant
 
 @router.put("/plants/{plant_id}/end-care", response_model=schemas.Plant, tags=["Plant Care"])
 @trace_function("end_plant_care")
@@ -208,15 +225,20 @@ async def end_plant_care(
         current_user: models.User = Depends(auth.get_current_user),
         db: Session = Depends(get_db)
 ):
-    """End plant care."""
-    logger.info("Ending plant care", plant_id=plant_id, sitter_id=current_user.id)
+    """End plant care: the sitter or the owner can close it."""
+    logger.info("Ending plant care", plant_id=plant_id, user_id=current_user.id)
 
     plant = db.query(models.Plant).filter(models.Plant.id == plant_id).first()
-    if not plant or plant.in_care_id != current_user.id:
+    if not plant or plant.in_care_id is None or current_user.id not in (plant.in_care_id, plant.owner_id):
         logger.error("Plant not found or not caring by user", plant_id=plant_id, user_id=current_user.id)
         raise HTTPException(status_code=404, detail="Plant not found or not caring by user")
 
+    for offer in plant.care_offers:
+        if offer.status == models.OfferStatus.ACCEPTED.value:
+            offer.status = models.OfferStatus.COMPLETED.value
     plant.in_care_id = None
+    plant.care_start = None
+    plant.care_end = None
     db.commit()
     db.refresh(plant)
 
@@ -227,15 +249,19 @@ async def end_plant_care(
 @router.get("/care-requests/", response_model=list[schemas.Plant], tags=["Plant Care"])
 @trace_function("list_care_requests")
 async def list_care_requests(
+        q: str | None = Query(None, max_length=100),
+        limit: int = Query(24, ge=1, le=100),
+        offset: int = Query(0, ge=0),
         current_user: models.User = Depends(auth.get_current_user),
         db: Session = Depends(get_db)
 ):
-    """List other members' plants waiting for a sitter."""
-    care_requests = db.query(models.Plant).filter(
+    """List other members' plants waiting for a sitter, filtered by name or location."""
+    expire_cares(db)
+    care_requests = search_plants(db.query(models.Plant).filter(
         models.Plant.care_requested.is_(True),
         models.Plant.in_care_id.is_(None),
         models.Plant.owner_id != current_user.id
-    ).all()
+    ), q, limit, offset)
 
     logger.info("Care requests retrieved", user_id=current_user.id, count=len(care_requests))
     return care_requests

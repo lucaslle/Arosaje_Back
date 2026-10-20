@@ -69,5 +69,20 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         username= security_manager.decrypt_value(user.username_encrypted),
         phone=security_manager.decrypt_value(user.phone_encrypted),
         is_active=user.is_active,
-        is_botanist=user.is_botanist
+        is_botanist=user.is_botanist,
+        botanist_verified=user.botanist_verified,
+        is_admin=user.email in settings.ADMIN_EMAILS,
     )
+
+
+async def get_admin_user(current_user: schemas.User = Depends(get_current_user)):
+    if not current_user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
+    return current_user
+
+
+async def get_verified_botanist(current_user: schemas.User = Depends(get_current_user)):
+    if not (current_user.is_botanist and current_user.botanist_verified):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Verified botanists only")
+    return current_user
+

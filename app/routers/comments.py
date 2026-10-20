@@ -33,6 +33,12 @@ async def create_comment(
     )
 
     db.add(db_comment)
+    # a verified botanist's comment answers the owner's open question
+    if current_user.is_botanist and current_user.botanist_verified:
+        db.query(models.AdviceRequest).filter(
+            models.AdviceRequest.plant_id == plant_id,
+            models.AdviceRequest.status == models.AdviceStatus.OPEN.value,
+        ).update({"status": models.AdviceStatus.ANSWERED.value}, synchronize_session=False)
     db.commit()
     db.refresh(db_comment)
 

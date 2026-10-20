@@ -6,6 +6,7 @@ os.environ["ENCRYPTION_KEY"] = "test-encryption-key-for-testing"
 os.environ["TEST_DATABASE_URL"] = "sqlite:///./test_a_rosa_je.db"
 
 import io
+from datetime import date, timedelta
 import pytest
 from fastapi.testclient import TestClient
 import json
@@ -262,8 +263,10 @@ def test_delete_user_with_plants_keeps_lists_working():
 
     assert client.post("/plants/", params={"name": "Leaving plant", "location": "A"}, files=photo(), headers=leaving).status_code == 200
     staying_plant = client.post("/plants/", params={"name": "Staying plant", "location": "B"}, files=photo(), headers=staying).json()["id"]
-    client.put(f"/plants/{staying_plant}", params={"care_requested": True}, headers=staying)
-    assert client.put(f"/plants/{staying_plant}/start-care", headers=leaving).status_code == 200
+    start, end = date.today() + timedelta(days=1), date.today() + timedelta(days=8)
+    client.put(f"/plants/{staying_plant}", params={"care_requested": True, "care_start": str(start), "care_end": str(end)}, headers=staying)
+    offer_id = client.post(f"/plants/{staying_plant}/care-offers", headers=leaving).json()["id"]
+    assert client.put(f"/care-offers/{offer_id}/accept", headers=staying).status_code == 200
 
     leaving_photo = client.get("/my_plants/", headers=leaving).json()[0]["photo_url"]
     leaving_id = client.get("/users/me/", headers=leaving).json()["id"]

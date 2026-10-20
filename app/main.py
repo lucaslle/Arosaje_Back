@@ -1,6 +1,7 @@
 import os
 from datetime import datetime as dt
 from fastapi.middleware.cors import CORSMiddleware
+import fastapi
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 import time
@@ -13,6 +14,10 @@ from app.routers import auth as auth_routes
 from app.routers import users as users_routes
 from app.routers import plants as plants_routes
 from app.routers import comments as comments_routes
+from app.routers import care as care_routes
+from app.routers import community as community_routes
+from app.business_metrics import BusinessMetrics
+from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -30,6 +35,14 @@ tracer = get_tracer()
 os.makedirs(settings.UPLOAD_DIRECTORY, exist_ok=True)
 
 app.mount("/photos", StaticFiles(directory=settings.UPLOAD_DIRECTORY), name="photos")
+
+# Prometheus scrapes api:8000/metrics (observability/prometheus/prometheus.yml); it answered 404 before
+REGISTRY.register(BusinessMetrics())
+
+
+@app.get("/metrics", include_in_schema=False)
+def metrics():
+    return fastapi.Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
 
 app.add_middleware(
     CORSMiddleware,
@@ -125,4 +138,6 @@ app.include_router(auth_routes.router)
 app.include_router(users_routes.router)
 app.include_router(plants_routes.router)
 app.include_router(comments_routes.router)
+app.include_router(care_routes.router)
+app.include_router(community_routes.router)
 

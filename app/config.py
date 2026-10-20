@@ -26,6 +26,9 @@ class Settings(BaseSettings):
 
     CORS_ORIGINS: list[str] = ["http://localhost:5000"]
 
+    # members whose e-mail is listed here can verify botanists, e.g. ADMIN_EMAILS=["admin@example.com"]
+    ADMIN_EMAILS: list[str] = []
+
 
 settings = Settings()
 

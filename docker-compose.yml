@@ -39,6 +39,7 @@ services:
       - ALGORITHM=HS256
       - ACCESS_TOKEN_EXPIRE_MINUTES=30
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY manquant, copiez .env.example vers .env}
+      - ADMIN_EMAILS=${ADMIN_EMAILS:-[]}
       # Variables pour l'observabilité complète
       - ENABLE_OBSERVABILITY=true
       - ENVIRONMENT=development

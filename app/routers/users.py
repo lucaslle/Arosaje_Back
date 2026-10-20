@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from pydantic import EmailStr
 from sqlalchemy.orm import Session
 
@@ -109,6 +111,8 @@ async def edit_user(
         db_user.phone_encrypted = security_manager.encrypt_value(phone)
     if is_botanist is not None:
         db_user.is_botanist = is_botanist
+        if not is_botanist:
+            db_user.botanist_verified = False
 
     db.commit()
     db.refresh(db_user)
@@ -121,7 +125,9 @@ async def edit_user(
         "username": security_manager.decrypt_value(db_user.username_encrypted),
         "phone": security_manager.decrypt_value(db_user.phone_encrypted),
         "is_active": db_user.is_active,
-        "is_botanist": db_user.is_botanist
+        "is_botanist": db_user.is_botanist,
+        "botanist_verified": db_user.botanist_verified,
+        "is_admin": current_user.is_admin,
     }
 
 @router.get("/users/me/", response_model=schemas.User, tags=["Users"])
@@ -150,6 +156,8 @@ async def delete_user(id: int, db: Session = Depends(get_db), current_user: mode
     # plants this member was looking after go back to their owners; owned plants are deleted by cascade
     db.query(models.Plant).filter(models.Plant.in_care_id == id).update({"in_care_id": None}, synchronize_session=False)
     photo_urls = [plant.photo_url for plant in db_user.owned_plants]
+    photo_urls += [log.photo_url for plant in db_user.owned_plants for log in plant.care_logs]
+    photo_urls += [log.photo_url for log in db_user.care_logs]
     db.delete(db_user)
     db.commit()
     for photo_url in photo_urls:
@@ -157,3 +165,66 @@ async def delete_user(id: int, db: Session = Depends(get_db), current_user: mode
 
     logger.info("User deleted successfully", user_id=id)
     return deleted_user
+
+
+@router.put("/users/me/password", status_code=204, tags=["Users"])
+@trace_function("password_change")
+async def change_password(change: schemas.PasswordChange, current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    db_user = db.query(models.User).filter(models.User.id == current_user.id).first()
+    if not auth.verify_password(change.current_password, db_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    db_user.hashed_password = auth.get_password_hash(change.new_password)
+    db.commit()
+    logger.info("Password changed", user_id=current_user.id)
+    return Response(status_code=204)
+
+
+@router.get("/users/me/export", tags=["Users"])
+@trace_function("personal_data_export")
+async def export_my_data(current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """Every piece of data the app holds about me (GDPR right of access and portability)."""
+    user_id = current_user.id
+    db_user = db.query(models.User).filter(models.User.id == user_id).first()
+
+    def rows(model, *filters):
+        return db.query(model).filter(*filters).all()
+
+    data = {
+        "exported_at": models.utcnow().isoformat(),
+        "profile": schemas.User.model_validate(current_user).model_dump(),
+        "plants": [schemas.Plant.model_validate(plant).model_dump() for plant in db_user.owned_plants],
+        "comments": [
+            {"plant_id": c.plant_id, "comment": c.comment, "time_stamp": c.time_stamp}
+            for c in rows(models.Comment, models.Comment.user_id == user_id)
+        ],
+        "care_offers": [
+            {"plant_id": o.plant_id, "status": o.status, "created_at": o.created_at, "decided_at": o.decided_at}
+            for o in rows(models.CareOffer, models.CareOffer.sitter_id == user_id)
+        ],
+        "messages": [
+            {"offer_id": m.offer_id, "text": m.text, "created_at": m.created_at}
+            for m in rows(models.Message, models.Message.sender_id == user_id)
+        ],
+        "care_logs": [
+            {"plant_id": log.plant_id, "text": log.text, "photo_url": log.photo_url, "created_at": log.created_at}
+            for log in rows(models.CareLog, models.CareLog.author_id == user_id)
+        ],
+        "favorites": [f.plant_id for f in rows(models.Favorite, models.Favorite.user_id == user_id)],
+        "advice_requests": [
+            {"plant_id": a.plant_id, "question": a.question, "status": a.status, "created_at": a.created_at}
+            for a in rows(models.AdviceRequest, models.AdviceRequest.author_id == user_id)
+        ],
+        "reviews_written": [
+            {"offer_id": r.offer_id, "rating": r.rating, "comment": r.comment, "created_at": r.created_at}
+            for r in rows(models.Review, models.Review.author_id == user_id)
+        ],
+        "reviews_received": [
+            {"offer_id": r.offer_id, "rating": r.rating, "comment": r.comment, "created_at": r.created_at}
+            for r in rows(models.Review, models.Review.sitter_id == user_id)
+        ],
+    }
+    return JSONResponse(
+        content=jsonable_encoder(data),
+        headers={"Content-Disposition": 'attachment; filename="arosaje-mes-donnees.json"'},
+    )
+

@@ -223,7 +223,7 @@ def test_list_all_plants_except_users(test_user_token, test_botanist_token, test
     # Le propriétaire n'expose que des infos publiques (ni hash, ni email, ni téléphone)
     owner = next(plant for plant in data if plant["id"] == botanist_plant_id)["owner"]
     assert set(owner) == {"id", "username", "is_botanist"}
-    assert owner["is_botanist"] is True
+    assert owner["is_botanist"] is False  # claimed but not yet verified by an admin
 
 def test_update_plant(test_user_token, test_plant):
     """Test de mise à jour d'une plante"""
@@ -251,74 +251,6 @@ def test_update_plant(test_user_token, test_plant):
     assert data["name"] == update_data["name"]
     assert data["location"] == update_data["location"]
     assert data["care_instructions"] == update_data["care_instructions"]
-
-def test_botanist_care_lifecycle(test_user_token, test_botanist_token, test_plant):
-    """Test du cycle de vie des soins d'une plante par un botaniste"""
-    botanist_headers = {"Authorization": f"Bearer {test_botanist_token['token']}"}
-    owner_headers = {"Authorization": f"Bearer {test_user_token['token']}"}
-
-    # Sans demande du propriétaire, la plante ne peut pas être prise en garde
-    response = client.put(f"/plants/{test_plant}/start-care", headers=botanist_headers)
-    assert response.status_code == 409
-
-    # Étape 1: Le propriétaire demande une garde, la plante apparaît dans les demandes
-    response = client.put(f"/plants/{test_plant}", params={"care_requested": True}, headers=owner_headers)
-    assert response.status_code == 200
-    assert response.json()["care_requested"] is True
-
-    response = client.get("/care-requests/", headers=botanist_headers)
-    assert response.status_code == 200
-    assert test_plant in [plant["id"] for plant in response.json()]
-
-    # Étape 2: Le botaniste commence à prendre soin de la plante, la demande est close
-    response = client.put(
-        f"/plants/{test_plant}/start-care",
-        headers=botanist_headers
-    )
-    
-    assert response.status_code == 200
-    data = response.json()
-    assert data["in_care_id"] == test_botanist_token["user_id"]
-    assert data["care_requested"] is False
-
-    response = client.get("/care-requests/", headers=botanist_headers)
-    assert test_plant not in [plant["id"] for plant in response.json()]
-    
-    # Étape 3: Le botaniste termine les soins
-    response = client.put(
-        f"/plants/{test_plant}/end-care",
-        headers=botanist_headers
-    )
-    
-    assert response.status_code == 200
-    data = response.json()
-    assert data["in_care_id"] is None
-    
-    # Étape 4: Vérifier que la plante n'apparaît plus dans les demandes de soin
-    response = client.get("/care-requests/", headers=botanist_headers)
-    assert response.status_code == 200
-    care_requests = response.json()
-    
-    if care_requests:  # Si la liste n'est pas vide
-        plant_ids = [plant["id"] for plant in care_requests]
-        assert test_plant not in plant_ids
-
-def test_cannot_take_over_care(test_user_token, test_botanist_token, test_plant):
-    """Une plante déjà gardée ne peut pas être reprise par un autre membre"""
-    owner_headers = {"Authorization": f"Bearer {test_user_token['token']}"}
-    botanist_headers = {"Authorization": f"Bearer {test_botanist_token['token']}"}
-    third = {"email": "third@example.com", "username": "third", "phone": "0102030405", "password": "thirdpassword"}
-    assert client.post("/users/", json=third).status_code == 200
-    third_token = client.post("/token", data={"username": third["email"], "password": third["password"]}).json()["access_token"]
-
-    client.put(f"/plants/{test_plant}", params={"care_requested": True}, headers=owner_headers)
-    assert client.put(f"/plants/{test_plant}/start-care", headers=botanist_headers).status_code == 200
-
-    response = client.put(f"/plants/{test_plant}/start-care", headers={"Authorization": f"Bearer {third_token}"})
-    assert response.status_code == 409
-
-    plant = next(p for p in client.get("/my_plants/", headers=owner_headers).json() if p["id"] == test_plant)
-    assert plant["in_care_id"] == test_botanist_token["user_id"]
 
 def test_photo_upload_rules(test_user_token, test_image):
     """Les photos reçoivent un nom unique et seuls les formats image sont acceptés"""
