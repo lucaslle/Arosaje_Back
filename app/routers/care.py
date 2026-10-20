@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from sqlalchemy.orm import Session
 
 from app import models, schemas, auth
-from app.care_rules import sitter_stats
+from app.care_rules import expire_cares, sitter_stats
 from app.database import get_db
 from app.observability import observability, trace_function, get_logger
 from app.routers.plants import get_plant_or_404, save_photo
@@ -245,3 +245,47 @@ async def add_care_log(
     db.commit()
     db.refresh(log)
     return log
+
+
+@router.get("/users/me/dashboard", response_model=schemas.Dashboard, tags=["Users"])
+@trace_function("member_dashboard")
+async def member_dashboard(current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """Everything the member has to look at or act on, in one call."""
+    expire_cares(db)
+    me = current_user.id
+    my_plants = db.query(models.Plant).filter(models.Plant.owner_id == me).all()
+    my_plant_ids = [plant.id for plant in my_plants]
+
+    def offers_on_my_plants(*filters):
+        if not my_plant_ids:
+            return []
+        offers = db.query(models.CareOffer).filter(models.CareOffer.plant_id.in_(my_plant_ids), *filters)
+        return [
+            schemas.DashboardOffer(
+                id=offer.id, plant_id=offer.plant_id, plant_name=offer.plant.name,
+                sitter_username=offer.sitter.username, created_at=offer.created_at,
+            )
+            for offer in offers.order_by(models.CareOffer.created_at.desc())
+        ]
+
+    sitting = db.query(models.Plant).filter(models.Plant.in_care_id == me).order_by(models.Plant.care_end).all()
+    advice = db.query(models.AdviceRequest).filter(
+        models.AdviceRequest.author_id == me,
+        models.AdviceRequest.status != models.AdviceStatus.CLOSED.value,
+    ).order_by(models.AdviceRequest.created_at.desc()).all()
+    user = db.query(models.User).filter(models.User.id == me).first()
+
+    return schemas.Dashboard(
+        plants_total=len(my_plants),
+        plants_waiting_sitter=sum(1 for plant in my_plants if plant.care_requested),
+        plants_being_cared=sum(1 for plant in my_plants if plant.in_care_id is not None),
+        offers_to_answer=offers_on_my_plants(models.CareOffer.status == PENDING),
+        reviews_to_give=offers_on_my_plants(models.CareOffer.status == COMPLETED, ~models.CareOffer.review.has()),
+        sitting=[schemas.DashboardSitting(plant=schemas.PlantSummary.model_validate(plant), care_end=plant.care_end) for plant in sitting],
+        my_pending_offers=db.query(models.CareOffer).filter(models.CareOffer.sitter_id == me, models.CareOffer.status == PENDING).count(),
+        advice=[
+            schemas.DashboardAdvice(id=a.id, plant_id=a.plant_id, plant_name=a.plant.name, question=a.question, status=a.status)
+            for a in advice
+        ],
+        reputation=schemas.SitterPublic.model_validate(user).model_copy(update=sitter_stats(db, me)),
+    )

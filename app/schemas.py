@@ -181,3 +181,32 @@ class BotanistRequest(pydantic.BaseModel):
 class BotanistDecision(pydantic.BaseModel):
     verified: bool
 
+
+class DashboardOffer(pydantic.BaseModel):
+    id: int
+    plant_id: int
+    plant_name: str
+    sitter_username: str | None
+    created_at: datetime.datetime
+
+class DashboardSitting(pydantic.BaseModel):
+    plant: PlantSummary
+    care_end: datetime.date | None
+
+class DashboardAdvice(pydantic.BaseModel):
+    id: int
+    plant_id: int
+    plant_name: str
+    question: str
+    status: str
+
+class Dashboard(pydantic.BaseModel):
+    plants_total: int
+    plants_waiting_sitter: int
+    plants_being_cared: int
+    offers_to_answer: list[DashboardOffer]
+    reviews_to_give: list[DashboardOffer]
+    sitting: list[DashboardSitting]
+    my_pending_offers: int
+    advice: list[DashboardAdvice]
+    reputation: SitterPublic

@@ -246,3 +246,30 @@ def test_metrics_expose_business_gauges():
     assert response.status_code == 200
     assert "plant_care_plants_waiting_sitter" in response.text
     assert "plant_care_average_wait_seconds" in response.text
+
+
+def test_member_dashboard():
+    owner, owner_id = register()
+    sitter, _ = register()
+    plant = create_plant(owner, "Dash")
+    create_plant(owner, "Other")
+    request_care(owner, plant)
+    offer = client.post(f"/plants/{plant}/care-offers", headers=sitter).json()
+    client.post(f"/plants/{plant}/advice-requests", json={"question": "Arrosage ?"}, headers=owner)
+
+    dashboard = client.get("/users/me/dashboard", headers=owner).json()
+    assert dashboard["plants_total"] == 2 and dashboard["plants_waiting_sitter"] == 1
+    assert [o["id"] for o in dashboard["offers_to_answer"]] == [offer["id"]]
+    assert dashboard["advice"][0]["question"] == "Arrosage ?"
+    assert client.get("/users/me/dashboard", headers=sitter).json()["my_pending_offers"] == 1
+
+    client.put(f"/care-offers/{offer['id']}/accept", headers=owner)
+    sitter_view = client.get("/users/me/dashboard", headers=sitter).json()
+    assert [s["plant"]["id"] for s in sitter_view["sitting"]] == [plant]
+    owner_view = client.get("/users/me/dashboard", headers=owner).json()
+    assert owner_view["plants_being_cared"] == 1 and owner_view["offers_to_answer"] == []
+
+    client.put(f"/plants/{plant}/end-care", headers=owner)
+    assert [o["id"] for o in client.get("/users/me/dashboard", headers=owner).json()["reviews_to_give"]] == [offer["id"]]
+    client.post(f"/care-offers/{offer['id']}/review", json={"rating": 4}, headers=owner)
+    assert client.get("/users/me/dashboard", headers=owner).json()["reviews_to_give"] == []
