@@ -8,7 +8,6 @@ import os
 import inspect
 from typing import Optional
 from functools import wraps
-from contextlib import contextmanager
 from contextvars import ContextVar
 from fastapi import FastAPI, Request
 
@@ -26,15 +25,13 @@ from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from opentelemetry.instrumentation.requests import RequestsInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 
-from prometheus_client import Counter, Histogram, Gauge
+from prometheus_client import Counter
 import structlog
 
 user_registrations_counter = None
 plant_creations_counter = None
 care_requests_counter = None
 comments_counter = None
-active_users_gauge = None
-plants_in_care_gauge = None
 
 # one value per request: a plain attribute was shared by every concurrent request
 _current_user_id: ContextVar[Optional[str]] = ContextVar("current_user_id", default=None)
@@ -159,7 +156,7 @@ class ObservabilityManager:
     def setup_custom_metrics(self):
         """Configure les métriques personnalisées pour l'application"""
         global user_registrations_counter, plant_creations_counter, care_requests_counter
-        global comments_counter, active_users_gauge, plants_in_care_gauge
+        global comments_counter
 
         try:
             user_registrations_counter = Counter(
@@ -183,16 +180,6 @@ class ObservabilityManager:
             comments_counter = Counter(
                 'plant_care_comments_created_total',
                 'Number of comments created'
-            )
-
-            active_users_gauge = Gauge(
-                'plant_care_active_users',
-                'Number of currently active users'
-            )
-
-            plants_in_care_gauge = Gauge(
-                'plant_care_plants_in_care',
-                'Number of plants currently in care'
             )
 
             print("Custom Prometheus metrics configured successfully")
@@ -280,22 +267,6 @@ class ObservabilityManager:
         except Exception as e:
             print(f"Error recording comment creation metric: {e}")
 
-    def update_active_users(self, count: int):
-        """Met à jour le nombre d'utilisateurs actifs"""
-        try:
-            if active_users_gauge:
-                active_users_gauge.set(count)
-        except Exception as e:
-            print(f"Error updating active users metric: {e}")
-
-    def update_plants_in_care(self, count: int):
-        """Met à jour le nombre de plantes en soin"""
-        try:
-            if plants_in_care_gauge:
-                plants_in_care_gauge.set(count)
-        except Exception as e:
-            print(f"Error updating plants in care metric: {e}")
-
     @property
     def current_user_id(self) -> Optional[str]:
         return _current_user_id.get()
@@ -315,46 +286,6 @@ class ObservabilityManager:
     def clear_current_user(self):
         """Efface l'utilisateur courant du contexte"""
         self.current_user_id = None
-
-    @contextmanager
-    def user_context(self, user_id: str):
-        """Context manager pour définir temporairement un utilisateur"""
-        old_user = self.current_user_id
-        self.set_current_user(user_id)
-        try:
-            yield
-        finally:
-            if old_user:
-                self.set_current_user(old_user)
-            else:
-                self.clear_current_user()
-
-    def log_info(self, message: str, **kwargs):
-        """Log d'information avec contexte utilisateur"""
-        try:
-            if self.current_user_id:
-                kwargs["user_id"] = self.current_user_id
-            self.logger.info(message, **kwargs)
-        except:
-            print(f"INFO: {message} - {kwargs}")
-
-    def log_error(self, message: str, **kwargs):
-        """Log d'erreur avec contexte utilisateur"""
-        try:
-            if self.current_user_id:
-                kwargs["user_id"] = self.current_user_id
-            self.logger.error(message, **kwargs)
-        except:
-            print(f"ERROR: {message} - {kwargs}")
-
-    def log_warning(self, message: str, **kwargs):
-        """Log d'avertissement avec contexte utilisateur"""
-        try:
-            if self.current_user_id:
-                kwargs["user_id"] = self.current_user_id
-            self.logger.warning(message, **kwargs)
-        except:
-            print(f"WARNING: {message} - {kwargs}")
 
 observability = ObservabilityManager()
 

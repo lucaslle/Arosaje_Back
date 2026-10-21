@@ -5,8 +5,6 @@ import fastapi
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 import time
-from app import models
-from app.database import engine
 from app.observability import observability, get_logger, get_tracer
 from app.config import settings
 
@@ -57,13 +55,6 @@ app.add_middleware(
 async def observability_middleware(request: Request, call_next):
     """Middleware pour ajouter des informations d'observabilité"""
     start_time = time.time()
-
-    auth_header = request.headers.get("authorization")
-    if auth_header and auth_header.startswith("Bearer "):
-        try:
-            observability.set_current_user("authenticated_user")
-        except:
-            pass
 
     logger.info(
         "Request started",
