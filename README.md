@@ -1,337 +1,159 @@
-# Plant Care Application - Stack LGTM avec Alloy
+# A'rosa-je — API
 
-Cette documentation décrit l'implémentation de la stack d'observabilité LGTM (Loki, Grafana, Tempo, Mimir) avec Grafana Alloy pour l'application Plant Care.
+API d'A'rosa-je : des particuliers confient leurs plantes à d'autres membres pendant leur absence et demandent conseil à des botanistes.
 
-##  Démarrage Rapide
+Ce dépôt contient l'API (FastAPI + PostgreSQL) et sa pile d'observabilité (Grafana, Prometheus, Loki, Tempo, Alloy). L'interface web est dans [Arosaje_Front](https://github.com/lucaslle/Arosaje_Front).
 
-### Prérequis
-- Docker et Docker Compose
-- 8 GB de RAM minimum
-- Ports disponibles: 3000, 3100, 3200, 4317, 4318, 5432, 8000, 9009, 12345
+## Démarrage rapide
 
-### Installation et Démarrage
+Prérequis : Docker avec Docker Compose. Les ports listés plus bas doivent être libres.
 
-```bash
-# Cloner le projet et naviguer dans le répertoire
-cd plant-care-app
+1. Crée le fichier `.env` à partir de l'exemple, puis remplace `change-me` par deux valeurs aléatoires :
+   ```bash
+   cp .env.example .env
+   ```
+   ```bash
+   python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+   ```
+   Lance la seconde commande deux fois : une valeur pour `SECRET_KEY`, une pour `ENCRYPTION_KEY`. Pour avoir un compte administrateur, ajoute son e-mail dans `ADMIN_EMAILS`, par exemple `ADMIN_EMAILS=["moi@example.com"]`.
 
-# Rendre le script exécutable
-chmod +x setup-observability.sh
+2. Démarre tout :
+   ```bash
+   docker compose up -d
+   ```
 
-# Démarrer la stack complète
-./setup-observability.sh start
-```
+3. Vérifie que l'API répond : http://localhost:8000/health. La documentation interactive des routes est sur http://localhost:8000/docs.
 
-Le script va automatiquement :
-- Créer la structure des répertoires
-- Générer un fichier `.env` avec des clés sécurisées
-- Démarrer tous les services
-- Exécuter les migrations de base de données
-- Configurer les dashboards Grafana
+Au démarrage, le conteneur de l'API applique les migrations de la base avant de lancer le serveur, il n'y a rien à faire à la main. Une base créée par une ancienne version du projet est détectée et mise à niveau.
 
-##  Architecture
+Pour l'interface web, voir le README d'Arosaje_Front.
 
-### Services Déployés
+> L'API refuse de démarrer si `SECRET_KEY` ou `ENCRYPTION_KEY` manque, fait moins de 32 caractères ou vaut encore `change-me`. Ne change pas `ENCRYPTION_KEY` sur une base existante : les e-mails, noms et téléphones déjà chiffrés deviendraient illisibles.
 
-| Service | Port | Description | Interface |
-|---------|------|-------------|-----------|
-| **PostgreSQL** | 5432 | Base de données principale | - |
-| **Plant Care API** | 8000 | Application FastAPI | http://localhost:8000/docs |
-| **Grafana Alloy** | 12345 | Collecteur de télémétrie | http://localhost:12345 |
-| **Loki** | 3100 | Stockage des logs | - |
-| **Tempo** | 3200 | Stockage des traces | - |
-| **Mimir** | 9009 | Stockage des métriques | - |
-| **Grafana** | 3000 | Visualisation | http://localhost:3000 |
+## Services
 
-### Flux de Données
+| Service | Port | Rôle |
+|---|---|---|
+| API (`plant_care_api`) | 8000 | FastAPI, documentation sur `/docs`, métriques sur `/metrics` |
+| PostgreSQL | 5432 | Base de données |
+| Grafana | 3000 | Tableaux de bord (identifiants `admin` / `admin`) |
+| Prometheus | 9090 | Métriques |
+| Loki | 3100 | Journaux |
+| Tempo | 3200, 4317, 4318 | Traces |
+| Alloy | 12345 | Collecteur de journaux et de traces |
+| Node Exporter | 9100 | Métriques de la machine |
 
-```
-Application FastAPI → Alloy → LGTM Stack → Grafana
-                     ↓
-              [Logs, Traces, Métriques]
-```
+## Configuration
 
-##  Observabilité
+Toutes les variables se lisent depuis l'environnement ou depuis `.env`.
 
-### Métriques Collectées
+| Variable | Rôle | Défaut |
+|---|---|---|
+| `SECRET_KEY` | Signature des tokens de connexion | aucun, obligatoire |
+| `ENCRYPTION_KEY` | Chiffrement des données personnelles et empreintes des e-mails et téléphones | aucun, obligatoire |
+| `ADMIN_EMAILS` | E-mails des administrateurs, au format JSON | `[]` |
+| `DATABASE_URL` | Base PostgreSQL | celle du `docker-compose.yml` |
+| `CORS_ORIGINS` | Adresses autorisées à appeler l'API depuis un navigateur, au format JSON | `["http://localhost:5000"]` |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | Durée de validité d'un token | `30` |
+| `MAX_FILE_SIZE` | Taille maximale d'une photo, en octets | 10 Mo |
+| `ENABLE_OBSERVABILITY` | Envoi des traces et journaux à Alloy | `true` |
 
-#### Métriques de l'Application
-- `plant_care_user_registrations_total` - Nombre total d'inscriptions
-- `plant_care_plant_creations_total` - Nombre total de plantes créées
-- `plant_care_care_requests_total` - Nombre total de demandes de soin
-- `plant_care_comments_created_total` - Nombre total de commentaires
-- `plant_care_active_users` - Nombre d'utilisateurs actifs
-- `plant_care_plants_in_care` - Nombre de plantes en soin
+## Fonctionnalités de l'API
 
-#### Métriques de Performance
-- `plant_care_request_duration_seconds` - Durée des requêtes HTTP
-- `plant_care_database_query_duration_seconds` - Durée des requêtes DB
-- Métriques système (CPU, mémoire, disque)
+- **Comptes** : inscription, connexion par token, profil, changement de mot de passe, export de ses données (RGPD), suppression du compte avec ses plantes, photos et échanges.
+- **Plantes** : ajout avec photo, modification, suppression, recherche par nom ou lieu, pagination.
+- **Garde** : demande avec dates, offres que le propriétaire accepte ou refuse, messagerie privée par offre, journal de garde avec photos, fin de garde, avis du propriétaire sur le gardien. Les demandes et gardes dont la date de fin est passée se ferment automatiquement.
+- **Communauté** : commentaires, favoris, questions aux botanistes, profils publics avec la note des gardiens.
+- **Administration** : validation des membres qui se déclarent botanistes.
+- **Tableau de bord** : `GET /users/me/dashboard` regroupe en un appel tout ce qu'un membre doit voir ou faire.
 
-### Logs Structurés
+## Sécurité et données personnelles
 
-Tous les logs sont au format JSON avec les champs suivants :
-- `timestamp` - Horodatage ISO 8601
-- `level` - Niveau de log (DEBUG, INFO, WARNING, ERROR)
-- `service` - Nom du service
-- `trace_id` - ID de trace pour corrélation
-- `span_id` - ID de span pour corrélation
-- `user_id` - ID utilisateur si authentifié
-- `message` - Message du log
-- Champs contextuels spécifiques
+- **Chiffrement :** e-mail, nom d'utilisateur et téléphone sont chiffrés en base. Pour retrouver un compte sans déchiffrer, l'API compare des empreintes HMAC (un calcul à sens unique qui dépend d'une clé secrète).
+- **E-mails :** ils sont comparés en minuscules et sans espaces.
+- **Token de connexion :** il désigne le membre par son identifiant. Changer d'e-mail ne déconnecte donc pas.
+- **Données dans les requêtes :** tout ce que le membre saisit (profil, commentaires, lieu des plantes) voyage dans le corps des requêtes, jamais dans l'URL. Les journaux ne notent que le chemin des requêtes.
+- **Réponses de l'API :** les données d'un autre membre se limitent à son identifiant, son nom d'utilisateur et son statut de botaniste validé.
+- **Limite de connexion :** après 10 échecs sur un compte, ou 30 depuis une même adresse, en 15 minutes, la connexion répond 429. Les compteurs sont gardés en mémoire : avec plusieurs processus API, il faudra les déplacer dans Redis.
+- **Photos :** elles reçoivent un nom aléatoire et sont limitées en format et en taille.
 
-### Traces Distribuées
+## Base de données et migrations
 
-OpenTelemetry auto-instrumente :
-- Requêtes HTTP FastAPI
-- Requêtes base de données SQLAlchemy/PostgreSQL
-- Requêtes HTTP sortantes
-- Opérations personnalisées avec `@trace_function`
+Le schéma est géré par Alembic (`alembic/versions/`) et appliqué au démarrage par `python -m app.migrate`.
 
-##  Dashboards Grafana
+Pour ajouter une migration :
+1. modifie `app/models.py` ;
+2. crée un fichier dans `alembic/versions/` dont `down_revision` pointe vers la dernière révision ;
+3. redémarre l'API.
 
-### Dashboard Principal : "Plant Care - Application Overview"
-
-**Panneaux disponibles :**
-1. **Request Rate** - Taux de requêtes par seconde
-2. **Total User Registrations** - Nombre total d'inscriptions
-3. **Response Time** - Temps de réponse (P50, P95)
-4. **Request Methods Distribution** - Distribution des méthodes HTTP
-5. **Plant Statistics** - Statistiques des plantes
-6. **Database Query Performance** - Performance des requêtes DB
-7. **Application Errors and Warnings** - Logs d'erreurs et avertissements
-
-### Accès Grafana
-- URL: http://localhost:3000
-- Login: `admin`
-- Password: `admin`
-
-##  Configuration
-
-### Variables d'Environnement
+Pour appliquer les migrations à la main dans le conteneur :
 
 ```bash
-# Base de données
-DATABASE_URL=postgresql://plant_user:plant_password@postgres:5432/plant_care_db
-
-# Observabilité
-ENABLE_OBSERVABILITY=true
-OTEL_SERVICE_NAME=plant-care-api
-OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4317
-
-# Sécurité
-SECRET_KEY=<généré automatiquement>
-ENCRYPTION_KEY=<généré automatiquement>
+docker compose exec api alembic upgrade head
 ```
 
-### Configuration Alloy
+## Tests
 
-Le fichier `observability/alloy/config.alloy` configure :
-- Découverte des services Docker
-- Collecte des logs (conteneurs + système)
-- Collecte des métriques (Prometheus + custom)
-- Réception des traces OTLP
-- Export vers Loki, Tempo, et Mimir
+Les tests utilisent SQLite et un dossier de photos temporaire. Ils n'ont besoin ni de PostgreSQL ni de `.env`.
 
-### Configuration PostgreSQL
+En local :
 
-Optimisations incluses :
-- Pool de connexions configuré
-- Index de performance automatiques
-- Fonctions d'analyse et monitoring
-- Audit trail optionnel
+```bash
+pip install -r requirements-dev.txt
+```
 
-##  Utilisation
+```bash
+pytest app/tests
+```
 
-### Recherche dans les Logs (Loki)
+La CI GitHub (`.github/workflows/ci.yml`) lance l'analyse du code, les tests et la construction de l'image Docker à chaque push.
+
+## Observabilité
+
+**Tableaux de bord Grafana** (http://localhost:3000) :
+- **Plant Care - Activité métier** : plantes en attente de gardien, gardes en cours, offres à traiter, délai moyen avant prise en garde, note moyenne des gardiens, questions ouvertes aux botanistes, botanistes à vérifier.
+- **Plant Care - Application Overview** : inscriptions, créations de plantes et journaux de l'application.
+
+**Métriques** exposées sur `/metrics` et récupérées par Prometheus toutes les 15 secondes :
+- **calculées depuis la base à chaque relevé :** `plant_care_plants_total`, `plant_care_plants_waiting_sitter`, `plant_care_plants_being_cared`, `plant_care_offers_pending`, `plant_care_cares_completed_total`, `plant_care_average_wait_seconds`, `plant_care_average_rating`, `plant_care_advice_requests_open`, `plant_care_botanists_waiting_verification` ;
+- **compteurs d'événements :** `plant_care_user_registrations_total`, `plant_care_plant_creations_total`, `plant_care_care_requests_total`, `plant_care_comments_created_total`. Ils n'apparaissent qu'après le premier événement de chaque type.
+
+**Journaux** au format JSON dans Loki, sous le label `service="api"`. Quelques exemples de requêtes :
 
 ```logql
-# Logs d'erreur de l'application
-{service="plant-care-api"} |= "ERROR"
-
-# Logs d'un utilisateur spécifique
-{service="plant-care-api"} | json | user_id="123"
-
-# Logs de requêtes lentes
-{service="plant-care-api"} | json | duration_ms > 1000
+{service="api", level="error"}
+{service="api"} | json | path="/token" | status_code="429"
+{service="api"} | json | __error__="" | duration_ms > 1000
 ```
 
-### Requêtes de Métriques (Mimir/Prometheus)
+**Traces** dans Tempo : recherche par `service.name="plant-care-api"`.
 
-```promql
-# Taux de requêtes par seconde
-rate(plant_care_request_duration_seconds_count[5m])
-
-# P95 du temps de réponse
-histogram_quantile(0.95, rate(plant_care_request_duration_seconds_bucket[5m]))
-
-# Taux d'erreur
-rate(plant_care_request_duration_seconds_count{status_code=~"5.."}[5m]) / 
-rate(plant_care_request_duration_seconds_count[5m])
-```
-
-### Recherche de Traces (Tempo)
-
-- Recherche par service : `service.name="plant-care-api"`
-- Recherche par utilisateur : `user.id="123"`
-- Recherche par durée : `duration > 1s`
-
-##  Alertes
-
-### Alertes Configurées
-
-1. **High Error Rate** - Taux d'erreur > 10%
-2. **Slow Response Time** - P95 > 2s
-3. **Database Connection Issues** - Échecs de connexion DB
-4. **High Memory Usage** - Utilisation mémoire > 80%
-
-### Configuration des Notifications
-
-Modifier `observability/grafana/provisioning/alerting/alerting.yml` pour configurer :
-- Email
-- Slack
-- Webhook
-- PagerDuty
-
-## 🛠️ Maintenance
-
-### Commandes Utiles
+## Commandes utiles
 
 ```bash
-# Démarrer la stack
-./setup-observability.sh start
-
-# Arrêter la stack
-./setup-observability.sh stop
-
-# Redémarrer la stack
-./setup-observability.sh restart
-
-# Voir le statut des services
-./setup-observability.sh status
-
-# Voir les logs d'un service
-./setup-observability.sh logs [service_name]
-
-# Nettoyage complet
-./setup-observability.sh clean
+docker compose logs -f api
 ```
-
-### Monitoring de la Stack
 
 ```bash
-# Vérifier les métriques d'Alloy
-curl http://localhost:12345/metrics
-
-# Vérifier la santé de Loki
-curl http://localhost:3100/ready
-
-# Vérifier la santé de Tempo
-curl http://localhost:3200/ready
-
-# Vérifier la santé de Mimir
-curl http://localhost:9009/ready
+docker compose up -d --build api
 ```
-
-### Sauvegarde
 
 ```bash
-# Sauvegarder la base de données
-docker-compose -f docker-compose.observability.yml exec postgres \
-  pg_dump -U plant_user plant_care_db > backup.sql
-
-# Sauvegarder les données Grafana
-docker cp plant_care_grafana:/var/lib/grafana ./grafana-backup
+docker compose exec postgres pg_dump -U plant_user plant_care_db > sauvegarde.sql
 ```
-
-##  Sécurité
-
-### Bonnes Pratiques Implémentées
-
-- Utilisateurs non-root dans les conteneurs
-- Secrets générés automatiquement
-- Chiffrement des données sensibles
-- Isolation réseau avec Docker Compose
-- Health checks pour tous les services
-
-### Configuration Production
-
-Pour la production, modifier :
 
 ```bash
-# Variables d'environnement
-ENVIRONMENT=production
-SECRET_KEY=<votre-clé-forte>
-ENCRYPTION_KEY=<votre-clé-de-chiffrement>
-
-# Base de données
-DATABASE_URL=postgresql://user:pass@prod-db:5432/plant_care
-
-# Grafana
-GF_SECURITY_ADMIN_PASSWORD=<mot-de-passe-fort>
+docker compose down
 ```
 
-## 🐛 Dépannage
+`docker compose down -v` supprime aussi les volumes, donc **toute la base et les données Grafana**.
 
-### Problèmes Courants
+## Dépannage
 
-1. **Services qui ne démarrent pas**
-   ```bash
-   # Vérifier les logs
-   ./setup-observability.sh logs
-   
-   # Vérifier l'espace disque
-   df -h
-   ```
-
-2. **Grafana inaccessible**
-   ```bash
-   # Redémarrer Grafana
-   docker-compose -f docker-compose.observability.yml restart grafana
-   ```
-
-3. **Métriques manquantes**
-   ```bash
-   # Vérifier Alloy
-   curl http://localhost:12345/-/config
-   ```
-
-4. **Problèmes de base de données**
-   ```bash
-   # Vérifier PostgreSQL
-   docker-compose -f docker-compose.observability.yml exec postgres \
-     pg_isready -U plant_user
-   ```
-
-### Logs de Debug
-
-```bash
-# Activer le debug pour un service
-docker-compose -f docker-compose.observability.yml exec api \
-  python -c "import logging; logging.basicConfig(level=logging.DEBUG)"
-```
-
-##  Ressources
-
-- [Documentation Grafana Alloy](https://grafana.com/docs/alloy/)
-- [Documentation OpenTelemetry Python](https://opentelemetry.io/docs/instrumentation/python/)
-- [Documentation FastAPI](https://fastapi.tiangolo.com/)
-- [Documentation PostgreSQL](https://www.postgresql.org/docs/)
-
-##  Contribution
-
-Pour contribuer à l'amélioration de la stack d'observabilité :
-
-1. Fork le projet
-2. Créer une branche feature
-3. Tester les modifications avec la stack complète
-4. Soumettre une pull request
-
-##  Support
-
-En cas de problème avec la stack d'observabilité :
-
-1. Vérifier les logs : `./setup-observability.sh logs`
-2. Vérifier le statut : `./setup-observability.sh status`
-3. Consulter cette documentation
-4. Créer une issue GitHub avec les logs d'erreur
+| Symptôme | Cause et solution |
+|---|---|
+| `SECRET_KEY manquant, copiez .env.example vers .env` | Le fichier `.env` n'existe pas ou ne contient pas les clés : voir le Démarrage rapide. |
+| `port is already allocated` | Un autre programme utilise ce port : arrête-le, ou change le port de gauche dans `docker-compose.yml`. |
+| Le front reçoit des erreurs CORS | Ajoute l'adresse du front dans `CORS_ORIGINS`. |
+| Tout le monde est déconnecté après une mise à jour | Normal quand le format du token change : il suffit de se reconnecter. |
+| Connexion refusée avec 429 | Trop d'échecs récents : attends 15 minutes ou redémarre l'API. |

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session, selectinload
 
 from app import models, schemas, auth
 from app.care_rules import sitter_stats
@@ -16,7 +17,8 @@ logger = get_logger()
 async def list_favorites(current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
     return [
         favorite.plant
-        for favorite in db.query(models.Favorite).filter(models.Favorite.user_id == current_user.id).order_by(models.Favorite.created_at.desc())
+        for favorite in db.query(models.Favorite).options(selectinload(models.Favorite.plant))
+        .filter(models.Favorite.user_id == current_user.id).order_by(models.Favorite.created_at.desc())
     ]
 
 
@@ -27,7 +29,10 @@ async def add_favorite(plant_id: int, current_user: models.User = Depends(auth.g
     exists = db.query(models.Favorite).filter(models.Favorite.user_id == current_user.id, models.Favorite.plant_id == plant_id).first()
     if not exists:
         db.add(models.Favorite(user_id=current_user.id, plant_id=plant_id))
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()  # a simultaneous request added it first: the plant is a favorite either way
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

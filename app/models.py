@@ -1,5 +1,5 @@
 import enum
-from sqlalchemy import Boolean, Column, Date, ForeignKey, Integer, String, DateTime, UniqueConstraint
+from sqlalchemy import Boolean, Column, Date, ForeignKey, Index, Integer, String, DateTime, UniqueConstraint, text
 from sqlalchemy.orm import relationship
 from sqlalchemy.orm import declarative_base
 from datetime import datetime, timezone
@@ -139,6 +139,13 @@ class OfferStatus(str, enum.Enum):
 class CareOffer(Base):
     """A member offering to look after a plant; the owner accepts or refuses it."""
     __tablename__ = "care_offers"
+    # one pending offer per member and plant, even when two requests arrive together
+    __table_args__ = (
+        Index(
+            "uq_care_offers_pending_sitter", "plant_id", "sitter_id", unique=True,
+            postgresql_where=text("status = 'pending'"), sqlite_where=text("status = 'pending'"),
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     plant_id = Column(Integer, ForeignKey("plants.id"), nullable=False, index=True)

@@ -273,3 +273,43 @@ def test_member_dashboard():
     assert [o["id"] for o in client.get("/users/me/dashboard", headers=owner).json()["reviews_to_give"]] == [offer["id"]]
     client.post(f"/care-offers/{offer['id']}/review", json={"rating": 4}, headers=owner)
     assert client.get("/users/me/dashboard", headers=owner).json()["reviews_to_give"] == []
+
+
+def test_one_pending_offer_per_member_even_on_simultaneous_requests():
+    """L'index unique partiel refuse un second « pending » pour le même membre et la même plante"""
+    from sqlalchemy.exc import IntegrityError
+    owner, _ = register()
+    _, sitter_id = register()
+    plant = create_plant(owner)
+    db = TestingSessionLocal()
+    try:
+        db.add(models.CareOffer(plant_id=plant, sitter_id=sitter_id, status="pending"))
+        db.commit()
+        db.add(models.CareOffer(plant_id=plant, sitter_id=sitter_id, status="pending"))
+        with pytest.raises(IntegrityError):
+            db.commit()
+        db.rollback()
+        # only pending offers are unique: a refused offer does not block a new one
+        db.query(models.CareOffer).filter(models.CareOffer.plant_id == plant).update({"status": "refused"})
+        db.add(models.CareOffer(plant_id=plant, sitter_id=sitter_id, status="pending"))
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_favorites_list_does_not_query_each_plant():
+    """Les plantes des favoris sont chargées en une requête, pas une par favori"""
+    from sqlalchemy import event
+    owner, _ = register()
+    fan, _ = register()
+    for i in range(5):
+        client.put(f"/plants/{create_plant(owner, f'Fav {i}')}/favorite", headers=fan)
+
+    statements = []
+    listener = lambda *args: statements.append(args[2])
+    event.listen(engine, "before_cursor_execute", listener)
+    try:
+        assert len(client.get("/favorites/", headers=fan).json()) == 5
+    finally:
+        event.remove(engine, "before_cursor_execute", listener)
+    assert len([s for s in statements if "FROM plants" in s]) == 1

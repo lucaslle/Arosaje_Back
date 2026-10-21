@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session, selectinload
 
 from app import models, schemas, auth
 from app.care_rules import expire_cares, sitter_stats
@@ -59,7 +60,12 @@ async def create_care_offer(plant_id: int, current_user: models.User = Depends(a
 
     offer = models.CareOffer(plant_id=plant_id, sitter_id=current_user.id)
     db.add(offer)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # a simultaneous request (double click) created the same pending offer first
+        db.rollback()
+        raise HTTPException(status_code=409, detail="You already offered to look after this plant")
     db.refresh(offer)
     observability.record_care_request("offer")
     logger.info("Care offer created", offer_id=offer.id, plant_id=plant_id, sitter_id=current_user.id)
@@ -83,7 +89,7 @@ async def list_plant_care_offers(plant_id: int, current_user: models.User = Depe
 @trace_function("list_my_care_offers")
 async def list_my_care_offers(current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
     """Offers I sent, so the plant list can show their status."""
-    return db.query(models.CareOffer).filter(
+    return db.query(models.CareOffer).options(selectinload(models.CareOffer.plant)).filter(
         models.CareOffer.sitter_id == current_user.id,
         models.CareOffer.status != models.OfferStatus.CANCELLED.value,
     ).order_by(models.CareOffer.created_at.desc()).all()
