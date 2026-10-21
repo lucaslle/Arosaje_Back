@@ -1,4 +1,3 @@
-from datetime import datetime as dt
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -29,7 +28,7 @@ async def create_comment(
         plant_id=plant_id,
         user_id=current_user.id,
         comment=comment,
-        time_stamp=dt.now(),
+        time_stamp=models.utcnow(),
     )
 
     db.add(db_comment)

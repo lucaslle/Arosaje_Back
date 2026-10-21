@@ -247,3 +247,22 @@ def teardown_module():
     Base.metadata.drop_all(bind=engine)
     if os.path.exists("./test_a_rosa_je.db"):
         os.remove("./test_a_rosa_je.db")
+
+
+def test_failed_logins_are_throttled():
+    """Après 10 échecs sur un compte, même le bon mot de passe est refusé un moment ; les autres comptes ne sont pas touchés"""
+    from app.routers import auth as auth_routes
+    body = {"email": "target@example.com", "username": "target", "phone": "0600000077", "password": "goodpassword"}
+    assert client.post("/users/", json=body).status_code == 200
+    try:
+        for _ in range(auth_routes.MAX_FAILURES_PER_EMAIL):
+            assert client.post("/token", data={"username": body["email"], "password": "wrong"}).status_code == 401
+        blocked = client.post("/token", data={"username": "TARGET@example.com", "password": "goodpassword"})
+        assert blocked.status_code == 429
+        assert "Retry-After" in blocked.headers
+        bystander = {"email": "bystander@example.com", "username": "bystander", "phone": "0600000076", "password": "goodpassword"}
+        assert client.post("/users/", json=bystander).status_code == 200
+        assert client.post("/token", data={"username": bystander["email"], "password": "goodpassword"}).status_code == 200
+    finally:
+        auth_routes._failures.clear()
+
